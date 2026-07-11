@@ -13,10 +13,12 @@ from .agent import Agent
 from .bus import BUS
 from .config import CONFIG
 from .db import DB
-from .interactions import run_conversation
+from .interactions import run_conversation, world_topics
+from .survival import Survival, weather_for_day
 from .world import load_world, load_personas
 
-_INTERACTIVE_KINDS = {"reasoning", "building", "teaching", "debate", "creative", "social"}
+_INTERACTIVE_KINDS = {"reasoning", "building", "teaching", "debate", "creative",
+                      "social", "farming"}
 
 
 class Simulation:
@@ -27,6 +29,9 @@ class Simulation:
             p["id"]: Agent(p, self.world, self.db) for p in load_personas()
         }
         self.judge = next((a for a in self.agents.values() if a.p.get("is_judge")), None)
+        self.survival = Survival(self.db, list(self.agents), world=self.world)
+        for a in self.agents.values():
+            a.survival = self.survival
         self.rng = random.Random(CONFIG.seed)
         self.tick = 0
         self.minutes = CONFIG.day_start_hour * 60
@@ -83,6 +88,8 @@ class Simulation:
             persona["home"] = "plaza"
         a = Agent(persona, self.world, self.db)
         self.agents[a.id] = a
+        self.survival.add_agent(a.id)
+        a.survival = self.survival
         if persona.get("is_judge") and self.judge is None:
             self.judge = a
         self.db.set_elo(a.id, 1000.0, 0)
@@ -118,6 +125,14 @@ class Simulation:
             self.day += 1
             await self._new_day()
 
+        # bodies first: hunger ticks, meals get eaten, gardens get worked
+        events = await self.survival.tick(self.agents, self.tick,
+                                          self._is_night(h), self.rng)
+        for aid, ev in events:
+            a = self.agents.get(aid)
+            if a:
+                await a.mem.observe(f"Today I {ev}.", self.tick, kind="survival")
+
         if self._is_night(h):
             await self._night_step()
         else:
@@ -126,6 +141,11 @@ class Simulation:
 
     # ------------------------------------------------------------------ #
     def _move_and_meet(self):
+        # 0) morning: anyone still abed gets up (runs only in daytime).
+        for a in self.agents.values():
+            if a.status == "sleeping":
+                a.status = "idle"
+                a.cooldown = 0
         # 1) advance travellers one road hop.
         for a in self.agents.values():
             if a.status == "traveling" and a.path:
@@ -145,6 +165,7 @@ class Simulation:
         by_district: dict[str, list[Agent]] = {}
         for a in self.agents.values():
             if a.status == "idle" and a.cooldown == 0:
+                a.bored += 1                 # idleness itches; stimulus is a drive
                 by_district.setdefault(a.district, []).append(a)
 
         paired: set[str] = set()
@@ -154,7 +175,12 @@ class Simulation:
                 continue
             cands = list(group)
             if district.kind == "debate" and self.judge in cands:
-                cands.remove(self.judge)          # Juno judges, never debates
+                cands.remove(self.judge)          # the magistrate judges, never debates
+            # Survival outranks chatter: the hungry-and-broke don't stop to
+            # talk anywhere — they work the rows (farming) or head for them.
+            cands = [c for c in cands
+                     if not (self.survival.hunger(c.id) >= 60
+                             and self.survival.food(c.id) == 0)]
             self.rng.shuffle(cands)               # vary who pairs with whom
             if len(cands) >= 2:
                 a, b = cands[0], cands[1]
@@ -166,6 +192,10 @@ class Simulation:
                             if self.world.districts[d].kind in _INTERACTIVE_KINDS}
         for a in self.agents.values():
             if a.status == "idle" and a.cooldown == 0 and a.id not in paired:
+                # A hungry farmer stays at the rows until the crop comes in.
+                if (self.world.districts[a.district].kind == "farming"
+                        and self.survival.hunger(a.id) >= 60):
+                    continue
                 # Linger at an interactive spot to give a partner time to arrive.
                 if a.district in interactive_here and self.rng.random() < 0.55:
                     continue
@@ -177,7 +207,15 @@ class Simulation:
     def _choose_destination(self, a: Agent) -> str:
         # Bias toward the Arena and the agent's home so meetings actually happen.
         # Districts with an unopened gate pull curious agents outward.
+        # Hunger overrides wanderlust: hungry townsfolk head for the gardens.
         gate_districts = self.world.frontier_districts()
+        hungry = self.survival.hunger(a.id) >= 60 and self.survival.food(a.id) == 0
+        # Where the people are: bored residents gravitate to occupied places.
+        occupancy: dict[str, int] = {}
+        for other in self.agents.values():
+            if other.id != a.id and other.status in ("idle", "interacting"):
+                occupancy[other.district] = occupancy.get(other.district, 0) + 1
+        stir = min(a.bored, 20) / 10.0       # 0..2: restlessness multiplier
         weights = []
         for did, d in self.world.districts.items():
             w = 1.0
@@ -188,7 +226,14 @@ class Simulation:
             if d.kind == "rest":
                 w = 0.2
             if did in gate_districts:
-                w += 1.2
+                w += 1.2 + 0.8 * stir        # novelty pulls harder on the bored
+            if d.kind == "farming":
+                w += 12.0 if hungry else 0.8
+            # Court hours: afternoons, the town drifts to the arena to argue
+            # and watch arguments (this is where preference pairs come from).
+            if d.kind == "debate" and 13 <= ((self.minutes // 60) % 24) < 18:
+                w += 6.0
+            w += min(occupancy.get(did, 0), 3) * (0.8 + stir)   # seek company
             weights.append((did, w))
         r = self.rng.random() * sum(w for _, w in weights)
         acc = 0.0
@@ -248,14 +293,27 @@ class Simulation:
 
     def _start_conversation(self, a: Agent, b: Agent, district):
         a.status = b.status = "interacting"
+        a.bored = b.bored = 0                # company scratches the itch
         a.partner, b.partner = b.id, a.id
         self._activity[district.kind] = self._activity.get(district.kind, 0) + 1
         self._grant_district_xp(district.id, 3)
         judge = self.judge if district.kind == "debate" else None
 
+        h = (self.minutes // 60) % 24
+        tod = ("early morning" if h < 10 else "midday" if h < 15
+               else "late afternoon" if h < 19 else "evening")
+        ctx = {
+            "weather": weather_for_day(self.day),
+            "time_of_day": tod,
+            "live_topics": world_topics(self.world, self.survival, self.db,
+                                        self.day, self.rng),
+            "survival": self.survival,
+        }
+
         async def _runner():
             try:
-                await run_conversation(a, b, district, self.db, self.tick, judge)
+                await run_conversation(a, b, district, self.db, self.tick, judge,
+                                       ctx=ctx)
             finally:
                 for x in (a, b):
                     x.status = "idle"

@@ -16,12 +16,25 @@ generation is marked "datasets built, training pending".
 from __future__ import annotations
 
 import json
+import re
 
 from .config import CONFIG, RUN_DIR
 from .db import DB
 
 _K = 24.0
 DATASETS = RUN_DIR / "datasets"
+
+# Fiction enforcement, data side: lines where a resident breaks the human
+# fiction never become SFT targets. (The judge additionally score-caps them,
+# which turns them into DPO 'rejected' via the normal preference pipeline.)
+_FICTION_RX = re.compile(
+    r"\b(ai|a\.i\.|artificial intelligence|language model|llm|neural|"
+    r"assistant|chatbot|training data|trained on|prompt|token|dataset|"
+    r"algorithm|machine learning)\b", re.IGNORECASE)
+
+
+def breaks_fiction(text: str) -> bool:
+    return bool(_FICTION_RX.search(text or ""))
 
 
 # --------------------------------------------------------------------------- #
@@ -45,21 +58,32 @@ def recompute_elo(db: DB, agent_ids: list[str]) -> None:
 
 
 # --------------------------------------------------------------------------- #
-def build_sft(db: DB) -> list[dict]:
-    out = []
+def build_sft(db: DB) -> tuple[list[dict], dict[str, list[dict]], int]:
+    """Returns (all_rows, rows_by_resident, fiction_breaks_excluded)."""
+    out: list[dict] = []
+    by_resident: dict[str, list[dict]] = {}
+    broken = 0
     for r in db.high_quality_exchanges(CONFIG.harvest_min_score):
         prompt, response = r["prompt"], r["response"]
         if not response or len(response) < 8:
             continue
-        out.append({"messages": [
+        if breaks_fiction(response):
+            broken += 1
+            continue
+        row = {"messages": [
             {"role": "user", "content": prompt},
             {"role": "assistant", "content": response},
-        ]})
-    return out
+        ]}
+        out.append(row)
+        by_resident.setdefault(r["speaker"], []).append(row)
+    return out, by_resident, broken
 
 
-def build_dpo(db: DB) -> list[dict]:
-    out = []
+def build_dpo(db: DB) -> tuple[list[dict], dict[str, list[dict]]]:
+    """Returns (all_pairs, pairs_by_winning_resident). The winner's id keys the
+    per-resident file: preference pairs teach the model whose behaviour won."""
+    out: list[dict] = []
+    by_resident: dict[str, list[dict]] = {}
     for r in db.preference_pairs(CONFIG.dpo_margin):
         ex = db.exchanges_for(r["iid"])
         a_lines = " ".join(e["response"] for e in ex if e["speaker"] == r["agent_a"])
@@ -67,11 +91,16 @@ def build_dpo(db: DB) -> list[dict]:
         if not a_lines or not b_lines:
             continue
         chosen, rejected = (a_lines, b_lines) if r["winner"] == "a" else (b_lines, a_lines)
-        out.append({
+        if breaks_fiction(chosen):
+            continue                      # never teach toward a fiction break
+        row = {
             "prompt": f"Argue well about: {r['topic']}",
             "chosen": chosen, "rejected": rejected,
-        })
-    return out
+        }
+        out.append(row)
+        winner_id = r["agent_a"] if r["winner"] == "a" else r["agent_b"]
+        by_resident.setdefault(winner_id, []).append(row)
+    return out, by_resident
 
 
 def _write_jsonl(path, rows) -> int:
@@ -86,8 +115,8 @@ async def harvest_cycle(db: DB, current_gen: int, agents: dict) -> dict | None:
     agent_ids = list(agents.keys())
     recompute_elo(db, agent_ids)
 
-    sft = build_sft(db)
-    dpo = build_dpo(db)
+    sft, sft_by_res, fiction_breaks = build_sft(db)
+    dpo, dpo_by_res = build_dpo(db)
     if not sft and not dpo:
         return {"generation": current_gen, "sft_count": 0, "dpo_count": 0,
                 "elo": db.get_elo(), "note": "no harvestable data yet"}
@@ -97,6 +126,11 @@ async def harvest_cycle(db: DB, current_gen: int, agents: dict) -> dict | None:
     dpo_path = DATASETS / f"gen{gen}_dpo.jsonl"
     n_sft = _write_jsonl(sft_path, sft)
     n_dpo = _write_jsonl(dpo_path, dpo)
+    # Per-resident growth: each resident's own verified rows, for its own LoRA.
+    for rid, rows in sft_by_res.items():
+        _write_jsonl(DATASETS / f"gen{gen}_sft_{rid}.jsonl", rows)
+    for rid, rows in dpo_by_res.items():
+        _write_jsonl(DATASETS / f"gen{gen}_dpo_{rid}.jsonl", rows)
 
     trainable = CONFIG.llm_backend == "ollama"
     note = ("datasets built, ready to train" if trainable
@@ -111,6 +145,8 @@ async def harvest_cycle(db: DB, current_gen: int, agents: dict) -> dict | None:
     return {
         "generation": gen, "sft_count": n_sft, "dpo_count": n_dpo,
         "sft_path": str(sft_path), "dpo_path": str(dpo_path),
+        "per_resident": {rid: len(rows) for rid, rows in sft_by_res.items()},
+        "fiction_breaks_excluded": fiction_breaks,
         "elo": db.get_elo(), "trainable": trainable, "note": note,
         "eval": {"passed": ev["passed"], "total": ev["total"], "rate": ev["rate"]},
         "eval_history": db.eval_history(),

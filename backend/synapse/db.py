@@ -219,3 +219,32 @@ class DB:
             "exchanges": self._one("SELECT COUNT(*) AS n FROM exchanges")["n"],
             "judgements": self._one("SELECT COUNT(*) AS n FROM judgements")["n"],
         }
+
+    # --- survival (hunger / plots), works on sqlite and pg ---
+    def ensure_survival_tables(self) -> None:
+        for stmt in (
+            "CREATE TABLE IF NOT EXISTS survival ("
+            " agent TEXT PRIMARY KEY, hunger REAL, food INTEGER,"
+            " harvests INTEGER DEFAULT 0, withers INTEGER DEFAULT 0,"
+            " meals_shared INTEGER DEFAULT 0)",
+            "CREATE TABLE IF NOT EXISTS plots ("
+            " agent TEXT PRIMARY KEY, state TEXT, ready_tick INTEGER)",
+        ):
+            self._run(stmt)
+
+    def get_survival(self, agent: str) -> dict | None:
+        return self._one("SELECT * FROM survival WHERE agent=?", (agent,))
+
+    def set_survival(self, agent: str, hunger: float, food: int,
+                     harvests: int = 0, withers: int = 0,
+                     meals_shared: int = 0) -> None:
+        self._upsert("survival", "agent",
+                     ["agent", "hunger", "food", "harvests", "withers", "meals_shared"],
+                     (agent, hunger, food, harvests, withers, meals_shared))
+
+    def get_plot(self, agent: str) -> dict | None:
+        return self._one("SELECT * FROM plots WHERE agent=?", (agent,))
+
+    def set_plot(self, agent: str, state: str, ready_tick: int) -> None:
+        self._upsert("plots", "agent", ["agent", "state", "ready_tick"],
+                     (agent, state, ready_tick))
