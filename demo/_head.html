@@ -1,0 +1,114 @@
+<style>
+  :root{
+    --ink:#33425c; --muted:#7b88a2;
+    --glass:rgba(255,255,255,0.74); --brd:rgba(150,175,210,0.38);
+    --accent:#ff7fa8; --accent2:#5db4ff; --good:#2fae5c; --gold:#f2b705;
+    --sans:"Segoe UI",ui-rounded,system-ui,-apple-system,sans-serif;
+    --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;background:#bfe6ff;color:var(--ink);font-family:var(--sans);overflow:hidden}
+  #c{position:fixed;inset:0;width:100vw;height:100vh;display:block}
+  #hud{position:fixed;inset:0;pointer-events:none;padding:16px;
+    display:grid;grid-template-columns:320px 1fr 280px;grid-template-rows:auto 1fr auto;gap:12px}
+  .panel{pointer-events:auto;background:var(--glass);border:1px solid var(--brd);border-radius:20px;
+    padding:13px 15px;backdrop-filter:blur(12px);box-shadow:0 10px 34px rgba(80,110,160,.22)}
+  header{grid-column:1/4;display:flex;justify-content:space-between;align-items:flex-start}
+  .brand h1{font-size:28px;letter-spacing:2px;font-weight:800;
+    background:linear-gradient(90deg,#ff9a5a,#ff7fa8 42%,#7b6bff 72%,#5db4ff);
+    -webkit-background-clip:text;background-clip:text;color:transparent}
+  .brand p{color:#5a6b86;font-size:12px;letter-spacing:.3px;margin-top:3px}
+  .status{display:flex;gap:9px;align-items:center}
+  .badge{font-size:10.5px;font-weight:800;letter-spacing:.8px;padding:6px 11px;border-radius:20px;
+    border:1px solid var(--brd);background:var(--glass);color:var(--ink);backdrop-filter:blur(8px)}
+  .badge.live{color:#fff;background:linear-gradient(90deg,#37c46a,#2fae5c);border-color:transparent}
+  .badge.model{color:#4a90d9}
+  .clock{display:flex;flex-direction:column;align-items:flex-end;padding:6px 13px;border-radius:14px;
+    background:var(--glass);border:1px solid var(--brd)}
+  .clock b{font-size:21px;font-family:var(--mono);font-variant-numeric:tabular-nums}
+  .clock span{font-size:10.5px;color:var(--muted)}
+  .left{grid-column:1;grid-row:2/4}
+  .right{grid-column:3;grid-row:2/4;display:flex;flex-direction:column;gap:12px}
+  h3{font-size:12px;letter-spacing:.8px;text-transform:uppercase;color:#4a5872;margin-bottom:9px;font-weight:800}
+  h3 small{color:var(--muted);letter-spacing:0;text-transform:none;font-weight:600}
+  .gen{display:flex;align-items:baseline;gap:8px;margin-bottom:11px}
+  .gen b{font-size:40px;line-height:1;font-family:var(--mono);
+    background:linear-gradient(90deg,#2fae5c,#5db4ff);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .gen span{color:var(--muted);font-size:11px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+  .grid>div{background:rgba(120,160,220,.08);border-radius:12px;padding:7px 10px}
+  .grid b{font-size:18px;font-family:var(--mono);font-variant-numeric:tabular-nums;color:var(--ink)}
+  .grid span{display:block;color:var(--muted);font-size:10px}
+  .eval{margin-top:11px}
+  .evalhead{display:flex;align-items:baseline;gap:8px}
+  .evalhead span{flex:1;color:var(--muted);font-size:10.5px}
+  .evalhead b{font-size:20px;color:var(--good);font-family:var(--mono)}
+  #spark{width:100%;height:30px;margin-top:5px;display:block}
+  .flow{display:flex;gap:5px;flex-wrap:wrap;margin-top:11px;align-items:center;color:var(--muted);font-size:10px}
+  .flow span{background:rgba(255,145,175,.14);color:#c85a80;padding:3px 8px;border-radius:8px;font-weight:700}
+  .elorow{display:grid;grid-template-columns:44px 1fr 32px;align-items:center;gap:7px;margin:5px 0}
+  .elorow .who{font-size:11.5px;text-transform:capitalize;color:#43506b;font-weight:600}
+  .elorow .r{font-size:11px;text-align:right;color:var(--muted);font-family:var(--mono)}
+  .bar{height:9px;background:rgba(120,160,220,.14);border-radius:6px;overflow:hidden}
+  .bar>div{height:100%;border-radius:6px;background:linear-gradient(90deg,#ff9a5a,#ff7fa8,#5db4ff);transition:width .6s}
+  .feed{display:flex;flex-direction:column;height:100%}
+  #feed{overflow-y:auto;display:flex;flex-direction:column;gap:8px;padding-right:4px}
+  .fi{display:flex;gap:8px;font-size:12.5px;line-height:1.35}
+  .fi .dot{width:8px;height:8px;border-radius:50%;margin-top:4px;flex:none}
+  .fi .t{color:#48566f}.fi .t b{color:#2b3548}
+  footer{grid-column:1/4;display:flex;gap:12px;align-items:center}
+  footer .note{color:#5a6b86;font-size:11.5px}
+  footer .k{color:#4a90d9;font-size:11.5px;font-family:var(--mono)}
+  ::-webkit-scrollbar{width:6px}::-webkit-scrollbar-thumb{background:rgba(120,160,220,.4);border-radius:3px}
+  @media (max-width:820px){#hud{grid-template-columns:1fr}.left,.right{display:none}}
+</style>
+
+<canvas id="c"></canvas>
+<div id="hud">
+  <header>
+    <div class="brand">
+      <h1>🏡 Synapse City</h1>
+      <p>a cozy town where little models chat, teach, and get smarter</p>
+    </div>
+    <div class="status">
+      <span class="badge live">● LIVE DEMO</span>
+      <span class="badge model">qwen2.5:7b</span>
+      <div class="clock"><b id="clk">08:00</b><span id="day">Day 1 ☀</span></div>
+    </div>
+  </header>
+
+  <div class="left panel feed">
+    <h3>Live activity</h3>
+    <div id="feed"></div>
+  </div>
+
+  <div class="right">
+    <div class="panel">
+      <h3>Self-learning loop</h3>
+      <div class="gen"><b id="genN">0</b><span>generations trained</span></div>
+      <div class="grid">
+        <div><b id="mConv">0</b><span>conversations</span></div>
+        <div><b id="mJudge">0</b><span>debates judged</span></div>
+        <div><b id="mRows">0</b><span>training rows</span></div>
+        <div><b id="mMem">0</b><span>memories</span></div>
+      </div>
+      <div class="eval">
+        <div class="evalhead"><span>task success <small>(code-verified)</small></span><b id="tsPct">0%</b></div>
+        <svg id="spark" viewBox="0 0 150 30" preserveAspectRatio="none"></svg>
+      </div>
+      <div class="flow"><span>chat</span>→<span>judge</span>→<span>SFT+DPO</span>→<span>gate</span>→<span>promote</span></div>
+    </div>
+    <div class="panel">
+      <h3>Debate ELO <small>(who argues best)</small></h3>
+      <div id="elo"></div>
+    </div>
+  </div>
+
+  <footer>
+    <span class="badge live">◉ PRESENTER MODE</span>
+    <span class="note">camera auto-follows the neighbours as they meet · runs unattended on one RTX 3090</span>
+    <span class="k" id="fps"></span>
+  </footer>
+</div>
+
+<script type="module">

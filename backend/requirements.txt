@@ -1,0 +1,6 @@
+# Core orchestrator (Nucbox, CPU-only)
+fastapi>=0.110
+uvicorn[standard]>=0.29
+httpx>=0.27
+numpy>=1.24
+# training/ has its own requirements (runs on the RTX 3090); see backend/training/requirements-train.txt

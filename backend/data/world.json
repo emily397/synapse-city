@@ -1,0 +1,46 @@
+{
+  "name": "Synapse City",
+  "size": { "x": 80, "z": 80 },
+  "districts": [
+    {
+      "id": "lab",        "name": "The Lab",      "kind": "reasoning",
+      "pos": { "x": -22, "z": -20 }, "color": "#3ba7ff",
+      "activity": "hypotheses and probing Q&A",  "signal": "sft_reasoning"
+    },
+    {
+      "id": "workshop",   "name": "The Workshop", "kind": "building",
+      "pos": { "x": 20, "z": -22 },  "color": "#ff8a3d",
+      "activity": "concrete build/solve tasks",  "signal": "sft_procedural"
+    },
+    {
+      "id": "school",     "name": "The School",   "kind": "teaching",
+      "pos": { "x": -24, "z": 18 },  "color": "#37d67a",
+      "activity": "one teaches, one learns",     "signal": "distillation"
+    },
+    {
+      "id": "arena",      "name": "The Arena",    "kind": "debate",
+      "pos": { "x": 0, "z": 0 },     "color": "#e0457b",
+      "activity": "two debate, a mentor judges", "signal": "dpo_preference"
+    },
+    {
+      "id": "studio",     "name": "The Studio",   "kind": "creative",
+      "pos": { "x": 24, "z": 20 },   "color": "#b76bff",
+      "activity": "divergent creative riffing",  "signal": "diversity"
+    },
+    {
+      "id": "plaza",      "name": "The Plaza",    "kind": "social",
+      "pos": { "x": 0, "z": -30 },   "color": "#f2c94c",
+      "activity": "free mingling",               "signal": "none"
+    },
+    {
+      "id": "homes",      "name": "The Homes",    "kind": "rest",
+      "pos": { "x": 0, "z": 30 },    "color": "#8a94a6",
+      "activity": "sleep, reflection, memory consolidation", "signal": "reflection"
+    }
+  ],
+  "roads": [
+    ["plaza", "arena"], ["arena", "lab"], ["arena", "workshop"],
+    ["arena", "school"], ["arena", "studio"], ["arena", "homes"],
+    ["lab", "school"], ["workshop", "studio"], ["plaza", "lab"], ["plaza", "workshop"]
+  ]
+}

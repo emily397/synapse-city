@@ -1,0 +1,10 @@
+# RTX 3090 training box only (CUDA 12.1+). Install into a separate venv from the
+# orchestrator. Unsloth pulls a matched torch/bitsandbytes/xformers stack.
+#   pip install "unsloth[cu121] @ git+https://github.com/unslothai/unsloth.git"
+unsloth
+trl>=0.9
+transformers>=4.44
+datasets>=2.20
+peft>=0.12
+bitsandbytes>=0.43
+accelerate>=0.33

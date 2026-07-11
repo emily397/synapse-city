@@ -1,0 +1,12 @@
+backend/run/
+**/__pycache__/
+*.pyc
+.venv/
+.venv-train/
+node_modules/
+dist/
+.vite/
+.vercel/
+*.local
+.env
+.DS_Store
