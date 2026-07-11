@@ -117,6 +117,29 @@ async def harvest_cycle(db: DB, current_gen: int, agents: dict) -> dict | None:
 
     sft, sft_by_res, fiction_breaks = build_sft(db)
     dpo, dpo_by_res = build_dpo(db)
+
+    # Proving Grounds: execution-verified rows (rejection sampling; no judge).
+    n_verified = 0
+    try:
+        for r in db._all("SELECT agent, prompt, response, pass FROM attempts"):
+            if r["pass"]:
+                row = {"messages": [
+                    {"role": "user", "content": r["prompt"]},
+                    {"role": "assistant", "content": r["response"]}]}
+                sft.append(row)
+                sft_by_res.setdefault(r["agent"], []).append(row)
+                n_verified += 1
+        # correct-vs-incorrect on the SAME task -> DPO pairs
+        for p in db._all(
+                "SELECT a.prompt AS prompt, a.response AS good, b.response AS bad,"
+                " a.agent AS agent FROM attempts a JOIN attempts b"
+                " ON a.family=b.family AND a.seed=b.seed"
+                " AND a.pass=1 AND b.pass=0"):
+            row = {"prompt": p["prompt"], "chosen": p["good"], "rejected": p["bad"]}
+            dpo.append(row)
+            dpo_by_res.setdefault(p["agent"], []).append(row)
+    except Exception:
+        pass
     if not sft and not dpo:
         return {"generation": current_gen, "sft_count": 0, "dpo_count": 0,
                 "elo": db.get_elo(), "note": "no harvestable data yet"}

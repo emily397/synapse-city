@@ -14,6 +14,7 @@ from .bus import BUS
 from .config import CONFIG
 from .db import DB
 from .interactions import run_conversation, world_topics
+from .proving import ProvingGrounds
 from .survival import Survival, weather_for_day
 from .world import load_world, load_personas
 
@@ -30,6 +31,7 @@ class Simulation:
         }
         self.judge = next((a for a in self.agents.values() if a.p.get("is_judge")), None)
         self.survival = Survival(self.db, list(self.agents), world=self.world)
+        self.proving = ProvingGrounds(self.db)
         for a in self.agents.values():
             a.survival = self.survival
         self.rng = random.Random(CONFIG.seed)
@@ -192,6 +194,16 @@ class Simulation:
                             if self.world.districts[d].kind in _INTERACTIVE_KINDS}
         for a in self.agents.values():
             if a.status == "idle" and a.cooldown == 0 and a.id not in paired:
+                # Proving Grounds: an idle mind at a workshop drifts to the
+                # puzzle board (execution-verified training fuel).
+                if (self.world.districts[a.district].kind == "building"
+                        and a.id not in self.proving.busy
+                        and self.rng.random() < 0.35):
+                    t = asyncio.create_task(
+                        self.proving.attempt(a, self.tick, self.rng))
+                    self._convos.add(t)
+                    t.add_done_callback(self._convos.discard)
+                    continue
                 # A hungry farmer stays at the rows until the crop comes in.
                 if (self.world.districts[a.district].kind == "farming"
                         and self.survival.hunger(a.id) >= 60):
