@@ -33,6 +33,19 @@ const ENV: any = (import.meta as any).env || {};
 let API_BASE: string = ENV.VITE_SYNAPSE_API || "";
 
 let feedId = 0;
+// Self-healing connection state: the backend's tunnel URL rotates, so on any
+// disconnect we re-resolve (fresh TUNNEL fetch) and reconnect with backoff.
+let liveWs: WebSocket | null = null;
+let mockTimer: any = null;
+let reconnectTimer: any = null;
+let reconnectDelay = 5000;
+
+function scheduleReconnect(connect: () => void, delay?: number) {
+  if (reconnectTimer) return;                 // never stack retries
+  const d = delay ?? reconnectDelay;
+  reconnectDelay = Math.min(reconnectDelay * 2, 60000);
+  reconnectTimer = setTimeout(() => { reconnectTimer = null; connect(); }, d);
+}
 
 export const useStore = create<State>((set, get) => ({
   connected: false,
@@ -112,20 +125,39 @@ export const useStore = create<State>((set, get) => ({
         if (r.ok) { base = c; break; }
       } catch {}
     }
-    if (!base) { startMock(get().apply); return; }
+    if (!base) {
+      // Nothing answers right now: show the offline mock but KEEP looking for
+      // the real town; when it comes back we take over transparently.
+      if (!get().world && !mockTimer) mockTimer = startMock(get().apply);
+      scheduleReconnect(() => get().connect(), 30000);
+      return;
+    }
     API_BASE = base.api;
 
-    fetch(`${API_BASE}/api/state`).then((r) => r.json()).then((snap) => get().apply(snap))
-      .catch(() => startMock(get().apply));
+    fetch(`${API_BASE}/api/state`).then((r) => r.json()).then((snap) => {
+      if (mockTimer) { clearInterval(mockTimer); mockTimer = null; }   // real town takes over
+      get().apply(snap);
+    }).catch(() => {});
 
     try {
+      if (liveWs) { try { liveWs.onclose = null; liveWs.close(); } catch {} }
       const ws = new WebSocket(`${base.ws}/ws`);
-      ws.onopen = () => set({ connected: true });
+      liveWs = ws;
+      ws.onopen = () => {
+        reconnectDelay = 5000;                 // healthy again: reset backoff
+        if (mockTimer) { clearInterval(mockTimer); mockTimer = null; }
+        set({ connected: true });
+      };
       ws.onmessage = (m) => get().apply(JSON.parse(m.data));
-      ws.onclose = () => set({ connected: false });
-      ws.onerror = () => { if (!get().world) startMock(get().apply); };
+      ws.onclose = () => {
+        set({ connected: false });
+        // Tunnel churned or backend restarted: re-resolve from scratch
+        // (fresh TUNNEL fetch) and reconnect. The town never stays gone.
+        scheduleReconnect(() => get().connect());
+      };
+      ws.onerror = () => { try { ws.close(); } catch {} };
     } catch {
-      startMock(get().apply);
+      scheduleReconnect(() => get().connect());
     }
   },
 
@@ -242,7 +274,7 @@ function pushFeed(feed: FeedItem[], item: FeedItem): FeedItem[] {
 // Offline mock: bundled world + random walkers so the city is alive
 // without the backend. Real backend events transparently take over.
 // ------------------------------------------------------------------ //
-function startMock(apply: (ev: any) => void) {
+function startMock(apply: (ev: any) => void): any {
   const districts = [
     { id: "lab", name: "The Lab", kind: "reasoning", pos: { x: -22, z: -20 }, color: "#3ba7ff", activity: "hypotheses", signal: "sft_reasoning" },
     { id: "workshop", name: "The Workshop", kind: "building", pos: { x: 20, z: -22 }, color: "#ff8a3d", activity: "build", signal: "sft_procedural" },
@@ -307,7 +339,7 @@ function startMock(apply: (ev: any) => void) {
     }
   };
 
-  setInterval(() => {
+  return setInterval(() => {
     tick++;
     const a = agents[Math.floor(Math.random() * agents.length)];
     const d = world.districts[Math.floor(Math.random() * world.districts.length)];
