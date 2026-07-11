@@ -1,5 +1,6 @@
 import { create } from "zustand";
-import type { World, Agent, Clock, Stats, FeedItem } from "./types";
+import type { World, Agent, Clock, Stats, FeedItem, District } from "./types";
+import { seedFrontiers, generateDistrict, levelFor } from "./world/evolve";
 
 interface State {
   connected: boolean;
@@ -25,7 +26,7 @@ interface State {
 // Point the deployed frontend at a self-hosted backend with these (build-time):
 //   VITE_SYNAPSE_API=http://your-nucbox:8000  VITE_SYNAPSE_WS=ws://your-nucbox:8000
 const ENV: any = (import.meta as any).env || {};
-const API_BASE: string = ENV.VITE_SYNAPSE_API || "";
+let API_BASE: string = ENV.VITE_SYNAPSE_API || "";
 
 let feedId = 0;
 
@@ -60,11 +61,14 @@ export const useStore = create<State>((set, get) => ({
   },
 
   connect: () => {
-    // Try REST snapshot first for an instant paint, then open the WS stream.
+    // Runtime override: open  ...vercel.app/?ws=wss://host&api=https://host  to
+    // point the hosted frontend at ANY backend (e.g. your Nucbox tunnel) with no
+    // rebuild. Falls back to build-time env, then same-origin.
+    const params = new URLSearchParams(location.search);
+    if (params.get("api")) API_BASE = params.get("api") as string;
+    const wsParam = params.get("ws") || ENV.VITE_SYNAPSE_WS;
     const proto = location.protocol === "https:" ? "wss" : "ws";
-    const wsUrl = ENV.VITE_SYNAPSE_WS
-      ? `${ENV.VITE_SYNAPSE_WS}/ws`
-      : `${proto}://${location.host}/ws`;
+    const wsUrl = wsParam ? `${wsParam}/ws` : `${proto}://${location.host}/ws`;
 
     fetch(`${API_BASE}/api/state`).then((r) => r.json()).then((snap) => get().apply(snap))
       .catch(() => startMock(get().apply));
@@ -127,6 +131,39 @@ export const useStore = create<State>((set, get) => ({
         });
         break;
       }
+      case "world_update": {
+        const w = s.world;
+        if (!w) break;
+        if (ev.kind === "district_discovered") {
+          const d: District = { ...ev.district, bornAt: Date.now() };
+          set({
+            world: {
+              ...w,
+              districts: [...w.districts, d],
+              roads: [...w.roads, ev.road],
+              frontiers: [
+                ...(w.frontiers ?? []).filter((f) => f.id !== ev.opened),
+                ...(ev.frontiers ?? []),
+              ],
+            },
+            focus: d.pos,
+            activeDistrict: d.id,
+            feed: pushFeed(s.feed, {
+              id: feedId++, kind: "world", color: d.color,
+              name: ev.by?.name,
+              text: `opened a gate. ${d.name} exists now.` }),
+          });
+        } else if (ev.kind === "district_levelup") {
+          set({
+            world: { ...w, districts: w.districts.map((d) =>
+              d.id === ev.district_id ? { ...d, level: ev.level } : d) },
+            feed: pushFeed(s.feed, {
+              id: feedId++, kind: "world", color: ev.color,
+              text: `${ev.name} grew to level ${ev.level}` }),
+          });
+        }
+        break;
+      }
       case "judgement":
         set({ feed: pushFeed(s.feed, { id: feedId++, kind: "judge",
           color: "#f2c94c",
@@ -183,24 +220,89 @@ function startMock(apply: (ev: any) => void) {
     "Think of it like a garden.", "Where's the evidence for that?",
     "What if we ran it backwards?", "Specificity wins. Marking that down."];
 
+  // The offline preview runs the SAME self-evolving world loop the backend
+  // does: districts earn XP from footfall and talk, curious agents open
+  // frontier gates, and the generator grows the town while you watch.
+  const world: World = {
+    name: "Synapse City", size: { x: 80, z: 80 }, roads,
+    districts: districts as District[],
+    frontiers: seedFrontiers(districts as District[]),
+  };
+  const xp: Record<string, number> = {};
+  const level: Record<string, number> = {};
+  const activity: Record<string, number> = {};
+  world.districts.forEach((d) => { xp[d.id] = 0; level[d.id] = 1; });
+
   const agents = cast.map((c, i) => ({ ...c, district: districts[i % districts.length].id,
     pos: { ...districts[i % districts.length].pos }, status: "idle", partner: null }));
-  apply({ type: "snapshot", world: { name: "Synapse City", size: { x: 80, z: 80 }, roads, districts },
-    agents, clock: { tick: 0, day: 1, hour: 12, minute: 0, night: false, generation: 0 },
-    stats: { memories: 0, interactions: 0, exchanges: 0, judgements: 0, generation: 0, backend: "mock (offline preview)", elo: cast.map((c) => ({ model: c.id, rating: 1000, games: 0 })) } });
 
   let tick = 0;
+  let lastExpand = -6;
+  const mockStats = () => ({
+    memories: 0, interactions: Math.floor(tick / 3), exchanges: tick,
+    judgements: Math.floor(tick / 8), generation: Math.floor(tick / 20),
+    backend: "mock (offline preview)",
+    elo: cast.map((c) => ({ model: c.id, rating: 1000, games: 0 })),
+    districts: world.districts.length, gates: world.frontiers!.length,
+    world_level: Object.values(level).reduce((a, b) => a + b, 0),
+  });
+
+  apply({ type: "snapshot", world, agents,
+    clock: { tick: 0, day: 1, hour: 12, minute: 0, night: false, generation: 0 },
+    stats: mockStats() });
+
+  const gainXp = (id: string, amt: number) => {
+    xp[id] = (xp[id] ?? 0) + amt;
+    const lvl = levelFor(xp[id]);
+    if (lvl > (level[id] ?? 1)) {
+      level[id] = lvl;
+      const d = world.districts.find((x) => x.id === id)!;
+      apply({ type: "world_update", kind: "district_levelup",
+        district_id: id, level: lvl, name: d.name, color: d.color });
+    }
+  };
+
   setInterval(() => {
     tick++;
     const a = agents[Math.floor(Math.random() * agents.length)];
-    const d = districts[Math.floor(Math.random() * districts.length)];
+    const d = world.districts[Math.floor(Math.random() * world.districts.length)];
     a.district = d.id; a.pos = { ...d.pos };
     apply({ type: "move", agent: a.id, to_district: d.id, pos: d.pos });
+    gainXp(d.id, 1);
     if (Math.random() < 0.6) {
       apply({ type: "speak", district: a.district, agent: a,
         text: lines[Math.floor(Math.random() * lines.length)], to: "x", turn: 0 });
+      activity[d.kind] = (activity[d.kind] ?? 0) + 1;
+      gainXp(d.id, 2);
     }
-    apply({ type: "clock", tick, day: 1, hour: (12 + Math.floor(tick / 6)) % 24,
-      minute: (tick * 10) % 60, night: false, generation: Math.floor(tick / 20) });
+
+    // A curious resident dares a gate roughly every ~20s.
+    if (world.frontiers!.length && tick - lastExpand >= 12 &&
+        Math.random() < 0.22 && world.districts.length < 48) {
+      const f = world.frontiers![Math.floor(Math.random() * world.frontiers!.length)];
+      const exp = generateDistrict(world, f, activity);
+      if (exp) {
+        lastExpand = tick;
+        world.districts = [...world.districts, exp.district];
+        world.roads = [...world.roads, exp.road];
+        world.frontiers = [
+          ...world.frontiers!.filter((x) => x.id !== exp.opened), ...exp.frontiers];
+        xp[exp.district.id] = 0; level[exp.district.id] = 1;
+        const opener = agents[Math.floor(Math.random() * agents.length)];
+        apply({ type: "world_update", kind: "district_discovered",
+          district: exp.district, road: exp.road, frontiers: exp.frontiers,
+          opened: exp.opened, by: opener });
+        opener.district = exp.district.id; opener.pos = { ...exp.district.pos };
+        apply({ type: "move", agent: opener.id, to_district: opener.district, pos: opener.pos });
+      } else {
+        world.frontiers = world.frontiers!.filter((x) => x.id !== f.id);
+      }
+    }
+
+    const hour = (12 + Math.floor(tick / 14)) % 24;
+    apply({ type: "clock", tick, day: 1 + Math.floor(tick / 336), hour,
+      minute: (tick * 10) % 60, night: hour >= 22 || hour < 7,
+      generation: Math.floor(tick / 20) });
+    if (tick % 4 === 0) apply({ type: "stats", ...mockStats() });
   }, 1500);
 }

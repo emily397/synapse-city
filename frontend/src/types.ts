@@ -3,9 +3,15 @@ export type Vec = { x: number; z: number };
 export interface District {
   id: string; name: string; kind: string; pos: Vec;
   color: string; activity: string; signal: string;
+  archetype?: string; level?: number; xp?: number;
+  bornAt?: number;               // client ms timestamp for the reveal animation
+}
+export interface Frontier {
+  id: string; from: string; name: string; dir: number; pos: Vec;
 }
 export interface World {
   name: string; size: Vec; roads: string[][]; districts: District[];
+  frontiers?: Frontier[];
 }
 export interface AvatarSpec { body?: string; hat?: string; }
 export interface Agent {
@@ -23,6 +29,7 @@ export interface Stats {
   memories: number; interactions: number; exchanges: number;
   judgements: number; generation: number; backend: string; elo: EloRow[];
   eval?: EvalRow | null; eval_history?: EvalRow[];
+  districts?: number; gates?: number; world_level?: number;
 }
 export interface FeedItem {
   id: number; kind: string; name?: string; color?: string; text: string;

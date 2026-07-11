@@ -64,6 +64,9 @@ class Simulation:
         s["backend"] = CONFIG.llm_backend
         s["eval"] = self.db.latest_eval()
         s["eval_history"] = self.db.eval_history()
+        s["districts"] = len(self.world.districts)
+        s["gates"] = len(self.world.frontiers)
+        s["world_level"] = sum(d.level for d in self.world.districts.values())
         return s
 
     def _seed_elo(self):
