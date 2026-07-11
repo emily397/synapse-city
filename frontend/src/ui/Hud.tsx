@@ -109,50 +109,89 @@ function Profile() {
   const p = useStore((s) => s.profile);
   const loading = useStore((s) => s.profileLoading);
   const close = useStore((s) => s.selectAgent);
+  const liveAgent = useStore((s) => (id ? (s.agents as any)[id] : null));
+  const activeDistrict = useStore((s) => s.activeDistrict);
   if (!id) return null;
-  const a = p?.agent;
+  const a = p?.agent ?? liveAgent ?? { name: id };
+  const kinds = p?.memories?.by_kind ?? {};
+  const talkingNow = liveAgent?.status === "interacting";
   return (
-    <div className="panel profile">
-      <div className="phead">
-        <h3>{a ? `${a.emoji ?? ""} ${a.name}` : id}</h3>
-        <button className="ghost" onClick={() => close(null)}>✕</button>
-      </div>
-      {loading && <div className="pmuted">loading…</div>}
-      {!loading && !p && <div className="pmuted">profile unavailable (backend offline?)</div>}
-      {p && (
-        <>
-          <div className="pline"><b>{a.role}</b> · running <code>{a.model || "town default"}</code></div>
-          <div className="pline pmuted">{a.district ? `currently in ${a.district}` : ""}</div>
-          <div className="grid">
-            <div><b>{Math.round(p.elo.rating)}</b><span>ELO ({p.debates.wins}W/{p.debates.losses}L)</span></div>
-            <div><b>{p.memories.total}</b><span>memories</span></div>
-            <div><b>{p.spoken_turns}</b><span>things said</span></div>
-            <div><b>{p.conversations}</b><span>conversations</span></div>
+    <>
+      <div className="drawer-scrim" onClick={() => close(null)} />
+      <aside className="drawer" style={{ ["--accent" as any]: a.color || "#7fd4ff" }}>
+        <button className="drawer-x" onClick={() => close(null)}>✕</button>
+
+        <div className="drawer-head">
+          <div className="drawer-ava" style={{ background: `${a.color || "#7fd4ff"}22`,
+            borderColor: a.color || "#7fd4ff" }}>{a.emoji ?? "🤖"}</div>
+          <div className="drawer-id">
+            <h2>{a.name}{a.is_judge ? " ⚖️" : ""}</h2>
+            <code className="drawer-model">{a.model || "town default"}</code>
+            <div className="drawer-role">{a.role}</div>
           </div>
-          {p.recent_utterances?.length > 0 && (
-            <div className="psec">
-              <h4>Recently said</h4>
-              {p.recent_utterances.slice(0, 4).map((u: any, i: number) => (
-                <div className="pquote" key={i}>
-                  “{u.text?.slice(0, 140)}{u.text?.length > 140 ? "…" : ""}”
-                  {u.district && <span className="pwhere"> — {u.district}</span>}
+        </div>
+
+        <div className="drawer-now">
+          <span className={`live-dot ${talkingNow ? "on" : ""}`} />
+          {talkingNow
+            ? <>debating right now in <b>{liveAgent?.district ?? a.district}</b></>
+            : <>{liveAgent?.status ?? "resting"} in <b>{liveAgent?.district ?? a.district ?? "town"}</b></>}
+        </div>
+
+        {loading && !p && <div className="drawer-muted">reading this model's history…</div>}
+        {!loading && !p && <div className="drawer-muted">history unavailable (backend offline)</div>}
+
+        {p && (
+          <>
+            <section className="drawer-sec">
+              <h4>In {a.name}'s own words <small>what this model actually said</small></h4>
+              {p.recent_utterances?.length > 0 ? (
+                p.recent_utterances.slice(0, 7).map((u: any, i: number) => (
+                  <blockquote className="say" key={i}>
+                    {u.text}
+                    {u.district && <cite>{u.district}{u.topic ? ` · on ${u.topic}` : ""}</cite>}
+                  </blockquote>
+                ))
+              ) : (
+                <div className="drawer-muted">hasn't spoken yet, waiting for its first conversation</div>
+              )}
+            </section>
+
+            <section className="drawer-sec">
+              <h4>What {a.name} remembers <small>its own accumulating memory</small></h4>
+              {p.recent_memories?.length > 0 ? (
+                p.recent_memories.slice(0, 5).map((m: any, i: number) => (
+                  <div className="mem" key={i}><i>{m.kind}</i> {m.text}</div>
+                ))
+              ) : <div className="drawer-muted">no memories stored yet</div>}
+              {Object.keys(kinds).length > 0 && (
+                <div className="mem-chips">
+                  {Object.entries(kinds).map(([k, n]: any) => (
+                    <span key={k} className="chip">{n} {k}</span>
+                  ))}
                 </div>
-              ))}
-            </div>
-          )}
-          {p.recent_memories?.length > 0 && (
-            <div className="psec">
-              <h4>Recent memories</h4>
-              {p.recent_memories.slice(0, 4).map((m: any, i: number) => (
-                <div className="pquote pmem" key={i}>
-                  <i>{m.kind}</i> {m.text?.slice(0, 120)}{m.text?.length > 120 ? "…" : ""}
-                </div>
-              ))}
-            </div>
-          )}
-        </>
-      )}
-    </div>
+              )}
+            </section>
+
+            <section className="drawer-sec">
+              <h4>Standing <small>progress signals for this model</small></h4>
+              <div className="drawer-stats">
+                <div><b>{Math.round(p.elo.rating)}</b><span>ELO</span></div>
+                <div><b className="w">{p.debates.wins}</b>/<b className="l">{p.debates.losses}</b><span>win / loss</span></div>
+                <div><b>{p.memories.total}</b><span>memories</span></div>
+                <div><b>{p.spoken_turns}</b><span>turns spoken</span></div>
+                <div><b>{p.conversations}</b><span>conversations</span></div>
+                <div><b>{p.generation ?? 0}</b><span>generation</span></div>
+              </div>
+              <p className="drawer-note">
+                Weights only change when a night training cycle promotes a new generation.
+                Its words and memories above are the raw material that trains it.
+              </p>
+            </section>
+          </>
+        )}
+      </aside>
+    </>
   );
 }
 
@@ -201,7 +240,8 @@ export function Hud() {
       </header>
 
       <div className="left"><Feed /><Residents /></div>
-      <div className="right"><Profile /><Loop /><Elo /></div>
+      <div className="right"><Loop /><Elo /></div>
+      <Profile />
 
       <footer>
         <button className={`ctrl${presenter ? " active" : ""}`} onClick={togglePresenter}>
