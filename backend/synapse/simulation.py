@@ -303,12 +303,15 @@ class Simulation:
         tod = ("early morning" if h < 10 else "midday" if h < 15
                else "late afternoon" if h < 19 else "evening")
         ctx = {
-            "weather": weather_for_day(self.day),
+            "weather": self.survival.current_weather(self.day),
             "time_of_day": tod,
             "live_topics": world_topics(self.world, self.survival, self.db,
                                         self.day, self.rng),
             "survival": self.survival,
         }
+        if self.survival.event:
+            ctx["event"] = (f"The town is in the grip of "
+                            f"{self.survival.event['name']} right now.")
 
         async def _runner():
             try:

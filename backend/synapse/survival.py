@@ -11,6 +11,7 @@ survive a restart.
 """
 from __future__ import annotations
 
+import os
 import random
 
 from .bus import BUS
@@ -31,6 +32,27 @@ START_FOOD = 3
 WEATHERS = ["clear and bright", "grey with soft rain", "windy, dust on the road",
             "hot and still", "cool with low fog", "crisp, smell of coming rain"]
 
+# Spontaneous weather events: rare, random, and consequential. Crops die, food
+# spoils, buildings take damage — and every loss becomes a felt memory.
+EVENT_CHANCE = float(os.getenv("SYNAPSE_WEATHER_EVENT_CHANCE", "0.004"))  # per tick
+WEATHER_EVENTS = [
+    {"name": "a black-cloud storm", "duration": 8,
+     "weather": "a storm: hammering rain, wind tearing at shutters, thunder overhead",
+     "crop_kill": 0.6, "food_spoil": 0.25, "damage": True},
+    {"name": "a sudden hailstorm", "duration": 5,
+     "weather": "hail: ice rattling off roofs, everyone running for doorways",
+     "crop_kill": 0.8, "food_spoil": 0.10, "damage": False},
+    {"name": "a scorching heatwave", "duration": 12,
+     "weather": "a heatwave: the air shimmers, wells run warm, no shade helps",
+     "crop_kill": 0.35, "food_spoil": 0.35, "damage": False},
+    {"name": "a howling windstorm", "duration": 6,
+     "weather": "a windstorm: dust and torn thatch in the air, carts overturned",
+     "crop_kill": 0.25, "food_spoil": 0.0, "damage": True},
+    {"name": "an early frost", "duration": 10,
+     "weather": "a hard frost: white rime on the rows, breath fogging",
+     "crop_kill": 0.7, "food_spoil": 0.0, "damage": False},
+]
+
 SENSES = {
     "farming":   "loam under your nails, rows of green shoots, the smell of turned earth",
     "reasoning": "shelves of jars and instruments, chalk dust, a kettle somewhere",
@@ -47,6 +69,11 @@ def weather_for_day(day: int) -> str:
     return WEATHERS[random.Random(day * 7919).randrange(len(WEATHERS))]
 
 
+def _spoil(n: int, pct: float, rng: random.Random) -> int:
+    """How many of n food portions spoil at probability pct each."""
+    return sum(1 for _ in range(n) if rng.random() < pct)
+
+
 def hunger_phrase(h: float) -> str:
     if h >= STARVING_AT:
         return "you are STARVING; your stomach aches and you can think of little but food"
@@ -61,6 +88,8 @@ class Survival:
     def __init__(self, db: DB, agent_ids: list[str], world=None):
         self.db = db
         self.world = world
+        self.event: dict | None = None       # active weather event
+        self.event_until = 0
         db.ensure_survival_tables()
         self.state: dict[str, dict] = {}
         for aid in agent_ids:
@@ -96,10 +125,68 @@ class Survival:
         return f"{hunger_phrase(s['hunger'])}; {stores}"
 
     # ---------------------------------------------------------------- #
+    def current_weather(self, day: int) -> str:
+        if self.event:
+            return self.event["weather"]
+        return weather_for_day(day)
+
+    def _maybe_weather_event(self, agents: dict, tick: int,
+                             rng: random.Random) -> list[tuple[str, str]]:
+        """Spontaneous, RNG-driven weather with real consequences. Rare by
+        design (EVENT_CHANCE/tick); never stacks with an active event."""
+        out: list[tuple[str, str]] = []
+        if self.event and tick >= self.event_until:
+            BUS.publish({"type": "toast",
+                         "text": f"{self.event['name'].capitalize()} has passed ⛅"})
+            self.event = None
+        if self.event or rng.random() >= EVENT_CHANCE:
+            return out
+        ev = rng.choice(WEATHER_EVENTS)
+        self.event = ev
+        self.event_until = tick + ev["duration"]
+        BUS.publish({"type": "toast", "text": f"⚡ {ev['name'].capitalize()} hits the town!"})
+
+        # crops: growing plots can be flattened
+        for aid in list(self.state):
+            plot = self.db.get_plot(aid)
+            if plot and plot["state"] == "growing" and rng.random() < ev["crop_kill"]:
+                self.db.set_plot(aid, "empty", 0)
+                self.state[aid]["withers"] += 1
+                out.append((aid, f"lost their growing crop to {ev['name']}"))
+        # supplies: carried food can spoil
+        if ev["food_spoil"] > 0:
+            for aid, s in self.state.items():
+                lost = _spoil(s["food"], ev["food_spoil"], rng)
+                if lost:
+                    s["food"] = max(0, s["food"] - lost)
+                    self.db.set_survival(**s)
+                    out.append((aid, f"had {lost} portion{'s' if lost != 1 else ''} "
+                                     f"of food spoiled by {ev['name']}"))
+        # buildings: a random district takes damage the town will talk about
+        if ev["damage"] and self.world is not None:
+            candidates = [d for d in self.world.districts.values()
+                          if d.kind not in ("rest",)]
+            if candidates:
+                d = rng.choice(candidates)
+                d.xp = max(0, d.xp - 6)
+                try:
+                    self.world.save()
+                except Exception:
+                    pass
+                BUS.publish({"type": "toast",
+                             "text": f"{ev['name'].capitalize()} damaged {d.name} 🏚️"})
+                for aid, a in agents.items():
+                    if a.district == d.id:
+                        out.append((aid, f"saw {ev['name']} tear into {d.name} "
+                                         f"around them"))
+        return out
+
+    # ---------------------------------------------------------------- #
     async def tick(self, agents: dict, tick: int, is_night: bool, rng: random.Random):
         """One survival step for the whole town. Returns list of (agent, event
         text) so the sim can turn them into memories/speech."""
         events: list[tuple[str, str]] = []
+        events.extend(self._maybe_weather_event(agents, tick, rng))
         for aid, a in agents.items():
             s = self.state.setdefault(aid, {"agent": aid, "hunger": START_HUNGER,
                                             "food": START_FOOD, "harvests": 0,
