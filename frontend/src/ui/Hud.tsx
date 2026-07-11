@@ -79,6 +79,83 @@ function Elo() {
   );
 }
 
+function Residents() {
+  const agents = useStore((s) => s.agents);
+  const select = useStore((s) => s.selectAgent);
+  const selected = useStore((s) => s.selectedAgent);
+  const list = Object.values(agents).sort((a: any, b: any) =>
+    (b.is_judge ? 1 : 0) - (a.is_judge ? 1 : 0) || a.name.localeCompare(b.name));
+  if (!list.length) return null;
+  return (
+    <div className="panel residents">
+      <h3>Residents <small>(click one to check in)</small></h3>
+      {list.map((a: any) => (
+        <button
+          key={a.id}
+          className={`resrow${selected === a.id ? " sel" : ""}`}
+          onClick={() => select(selected === a.id ? null : a.id)}
+        >
+          <span className="dot" style={{ background: a.color }} />
+          <span className="rname">{a.emoji ?? ""} {a.name}{a.is_judge ? " ⚖️" : ""}</span>
+          <span className="rmodel">{a.model || "town default"}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function Profile() {
+  const id = useStore((s) => s.selectedAgent);
+  const p = useStore((s) => s.profile);
+  const loading = useStore((s) => s.profileLoading);
+  const close = useStore((s) => s.selectAgent);
+  if (!id) return null;
+  const a = p?.agent;
+  return (
+    <div className="panel profile">
+      <div className="phead">
+        <h3>{a ? `${a.emoji ?? ""} ${a.name}` : id}</h3>
+        <button className="ghost" onClick={() => close(null)}>✕</button>
+      </div>
+      {loading && <div className="pmuted">loading…</div>}
+      {!loading && !p && <div className="pmuted">profile unavailable (backend offline?)</div>}
+      {p && (
+        <>
+          <div className="pline"><b>{a.role}</b> · running <code>{a.model || "town default"}</code></div>
+          <div className="pline pmuted">{a.district ? `currently in ${a.district}` : ""}</div>
+          <div className="grid">
+            <div><b>{Math.round(p.elo.rating)}</b><span>ELO ({p.debates.wins}W/{p.debates.losses}L)</span></div>
+            <div><b>{p.memories.total}</b><span>memories</span></div>
+            <div><b>{p.spoken_turns}</b><span>things said</span></div>
+            <div><b>{p.conversations}</b><span>conversations</span></div>
+          </div>
+          {p.recent_utterances?.length > 0 && (
+            <div className="psec">
+              <h4>Recently said</h4>
+              {p.recent_utterances.slice(0, 4).map((u: any, i: number) => (
+                <div className="pquote" key={i}>
+                  “{u.text?.slice(0, 140)}{u.text?.length > 140 ? "…" : ""}”
+                  {u.district && <span className="pwhere"> — {u.district}</span>}
+                </div>
+              ))}
+            </div>
+          )}
+          {p.recent_memories?.length > 0 && (
+            <div className="psec">
+              <h4>Recent memories</h4>
+              {p.recent_memories.slice(0, 4).map((m: any, i: number) => (
+                <div className="pquote pmem" key={i}>
+                  <i>{m.kind}</i> {m.text?.slice(0, 120)}{m.text?.length > 120 ? "…" : ""}
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function Feed() {
   const feed = useStore((s) => s.feed);
   const icon: Record<string, string> = { speak: "💬", judge: "⚖️", reflect: "💭", gen: "📦" };
@@ -123,8 +200,8 @@ export function Hud() {
         </div>
       </header>
 
-      <div className="left"><Feed /></div>
-      <div className="right"><Loop /><Elo /></div>
+      <div className="left"><Feed /><Residents /></div>
+      <div className="right"><Profile /><Loop /><Elo /></div>
 
       <footer>
         <button className={`ctrl${presenter ? " active" : ""}`} onClick={togglePresenter}>

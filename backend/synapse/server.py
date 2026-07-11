@@ -69,6 +69,56 @@ async def agents():
     return [a.public() for a in SIM.agents.values()]
 
 
+@app.get("/api/agents/{aid}/profile")
+async def agent_profile(aid: str):
+    """Everything the town knows about one resident: identity, debate record,
+    memory growth, and its most recent thoughts — the check-in window on a
+    model's autonomous development."""
+    agent = SIM.agents.get(aid)
+    if not agent:
+        raise HTTPException(status_code=404, detail=f"no resident '{aid}'")
+    db = SIM.db
+
+    elo = db._one("SELECT rating, games FROM elo WHERE model=?", (aid,)) or {}
+    wins = db._one(
+        "SELECT count(*) AS n FROM judgements "
+        "WHERE (agent_a=? AND winner='a') OR (agent_b=? AND winner='b')",
+        (aid, aid)) or {}
+    losses = db._one(
+        "SELECT count(*) AS n FROM judgements "
+        "WHERE (agent_a=? AND winner='b') OR (agent_b=? AND winner='a')",
+        (aid, aid)) or {}
+    mem_total = db._one(
+        "SELECT count(*) AS n FROM memories WHERE agent=?", (aid,)) or {}
+    mem_kinds = db._all(
+        "SELECT kind, count(*) AS n FROM memories WHERE agent=? GROUP BY kind",
+        (aid,))
+    recent_memories = db._all(
+        "SELECT kind, text, tick FROM memories WHERE agent=? "
+        "ORDER BY id DESC LIMIT 6", (aid,))
+    utterances = db._all(
+        "SELECT e.response AS text, i.district, i.topic FROM exchanges e "
+        "LEFT JOIN interactions i ON e.interaction_id = i.id "
+        "WHERE e.speaker=? ORDER BY e.id DESC LIMIT 8", (aid,))
+    spoken = db._one(
+        "SELECT count(*) AS n FROM exchanges WHERE speaker=?", (aid,)) or {}
+    convos = db._one(
+        "SELECT count(*) AS n FROM interactions WHERE participants LIKE ?",
+        (f"%{aid}%",)) or {}
+
+    return {
+        "agent": agent.public(),
+        "elo": {"rating": elo.get("rating", 1000.0), "games": elo.get("games", 0)},
+        "debates": {"wins": wins.get("n", 0), "losses": losses.get("n", 0)},
+        "memories": {"total": mem_total.get("n", 0),
+                     "by_kind": {r["kind"]: r["n"] for r in mem_kinds}},
+        "recent_memories": recent_memories,
+        "recent_utterances": utterances,
+        "spoken_turns": spoken.get("n", 0),
+        "conversations": convos.get("n", 0),
+    }
+
+
 class NewResident(BaseModel):
     name: str
     model: str = ""

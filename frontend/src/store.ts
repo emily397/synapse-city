@@ -15,6 +15,10 @@ interface State {
   focus: { x: number; z: number } | null;
   presenter: boolean;
   autoRotate: boolean;
+  selectedAgent: string | null;
+  profile: any | null;
+  profileLoading: boolean;
+  selectAgent: (id: string | null) => void;
   toggleRotate: () => void;
   togglePresenter: () => void;
   connect: () => void;
@@ -43,6 +47,19 @@ export const useStore = create<State>((set, get) => ({
   focus: null,
   presenter: true,
   autoRotate: true,
+  selectedAgent: null,
+  profile: null,
+  profileLoading: false,
+  selectAgent: (id) => {
+    if (!id) { set({ selectedAgent: null, profile: null }); return; }
+    set({ selectedAgent: id, profile: null, profileLoading: true });
+    fetch(`${API_BASE}/api/agents/${id}/profile`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((p) => {
+        if (get().selectedAgent === id) set({ profile: p, profileLoading: false });
+      })
+      .catch(() => set({ profileLoading: false }));
+  },
   toggleRotate: () => set((s) => ({ autoRotate: !s.autoRotate })),
   togglePresenter: () => set((s) => ({ presenter: !s.presenter })),
 
