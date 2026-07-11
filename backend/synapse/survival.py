@@ -100,6 +100,10 @@ class Survival:
                 if not db.pg else
                 "CREATE TABLE IF NOT EXISTS goods ("
                 " id SERIAL PRIMARY KEY, agent TEXT, item TEXT)")
+        db._run("CREATE TABLE IF NOT EXISTS health ("
+                " agent TEXT PRIMARY KEY, hp REAL DEFAULT 100)")
+        db._run("CREATE TABLE IF NOT EXISTS relations ("
+                " pair TEXT PRIMARY KEY, score REAL DEFAULT 0)")
         self.state: dict[str, dict] = {}
         for aid in agent_ids:
             row = db.get_survival(aid)
@@ -128,6 +132,42 @@ class Survival:
     def is_starving(self, aid: str) -> bool:
         return self.hunger(aid) >= STARVING_AT
 
+    # --- health (mortality: the body keeps the score) ------------------ #
+    def hp(self, aid: str) -> float:
+        r = self.db._one("SELECT hp FROM health WHERE agent=?", (aid,))
+        return r["hp"] if r else 100.0
+
+    def _set_hp(self, aid: str, hp: float):
+        self.db._upsert("health", "agent", ["agent", "hp"],
+                        (aid, max(0.0, min(100.0, hp))))
+
+    def health_phrase(self, aid: str) -> str:
+        hp = self.hp(aid)
+        if hp <= 25:
+            return ("you are GRAVELY ILL; your strength is failing and you "
+                    "fear for your life")
+        if hp <= 60:
+            return "you are unwell and feel it in your bones"
+        return "your body is sound"
+
+    # --- relations (others are real people who may not like you) ------- #
+    def affinity(self, a: str, b: str) -> float:
+        r = self.db._one("SELECT score FROM relations WHERE pair=?", (f"{a}>{b}",))
+        return r["score"] if r else 0.0
+
+    def shift_affinity(self, a: str, b: str, delta: float):
+        cur = self.affinity(a, b)
+        self.db._upsert("relations", "pair", ["pair", "score"],
+                        (f"{a}>{b}", max(-10.0, min(10.0, cur + delta))))
+
+    def regard_phrase(self, a: str, b_name: str, b_id: str) -> str:
+        s = self.affinity(a, b_id)
+        if s >= 3:
+            return f"You genuinely like and trust {b_name}."
+        if s <= -3:
+            return f"You have little patience for {b_name} and it shows."
+        return ""
+
     def goods_of(self, aid: str) -> list[str]:
         return [r["item"] for r in
                 self.db._all("SELECT item FROM goods WHERE agent=?", (aid,))]
@@ -145,7 +185,7 @@ class Survival:
                   if food else "your food pouch is empty")
         goods = self.goods_of(aid)
         owns = f"; among your possessions: {', '.join(goods)}" if goods else ""
-        return f"{hunger_phrase(s['hunger'])}; {stores}{owns}"
+        return f"{hunger_phrase(s['hunger'])}; {self.health_phrase(aid)}; {stores}{owns}"
 
     # ---------------------------------------------------------------- #
     def current_weather(self, day: int) -> str:
@@ -226,6 +266,27 @@ class Survival:
             # shelter matters: a wool blanket makes the night cheaper on the body
             night_rate = 0.25 if "a wool blanket" in self.goods_of(aid) else 0.4
             s["hunger"] = min(100.0, s["hunger"] + (HUNGER_PER_TICK * (night_rate if is_night else 1.0)))
+
+            # the body keeps the score: starvation erodes health, care restores it
+            hp = self.hp(aid)
+            if s["hunger"] >= 98:
+                hp -= 1.2
+            elif s["hunger"] < 50:
+                hp += 0.3
+            if hp <= 0:
+                # collapse: survived, but it costs dearly — and is never forgotten
+                hp = 30.0
+                s["hunger"] = 40.0
+                goods = self.goods_of(aid)
+                if goods:
+                    self.db._run("DELETE FROM goods WHERE agent=? AND item=?",
+                                 (aid, goods[0]))
+                BUS.publish({"type": "toast",
+                             "text": f"{a.p['name']} collapsed from starvation "
+                                     f"and was carried to the herbalist 💀"})
+                events.append((aid, "collapsed from starvation, nearly died, and "
+                                    "paid the herbalist with a prized possession"))
+            self._set_hp(aid, hp)
 
             # eat when hungry and carrying food
             if s["hunger"] >= EAT_AT and s["food"] > 0:

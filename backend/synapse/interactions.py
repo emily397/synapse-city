@@ -113,6 +113,11 @@ async def run_conversation(a: Agent, b: Agent, district, db: DB, tick: int,
         query = transcript[-1][1] if transcript else topic
         memories = await speaker.mem.retrieve(query, tick, k=3)
         other = f"You are talking with {listener.p['name']}, {listener.p['role']}."
+        surv0 = ctx.get("survival")
+        if surv0 is not None:
+            r = surv0.regard_phrase(speaker.id, listener.p["name"], listener.id)
+            if r:
+                other += f" {r}"
         system = speaker.system_prompt(district.activity, memories,
                                        embodiment=f"{embodiment} {other}")
 
@@ -146,17 +151,27 @@ async def run_conversation(a: Agent, b: Agent, district, db: DB, tick: int,
         for giver, taker in ((a, b), (b, a)):
             ev = surv.maybe_share(giver.id, taker.id, pair)
             if ev:
+                surv.shift_affinity(taker.id, giver.id, 3.0)   # gratitude
                 await a.mem.observe(ev, tick, kind="survival")
                 await b.mem.observe(ev, tick, kind="survival")
                 break
         trade = surv.maybe_trade(a.id, b.id, pair, rng)
         if trade:
+            surv.shift_affinity(a.id, b.id, 1.0)
+            surv.shift_affinity(b.id, a.id, 1.0)
             await a.mem.observe(trade, tick, kind="survival")
             await b.mem.observe(trade, tick, kind="survival")
+        # ordinary chemistry: every meeting nudges how they feel about each other
+        surv.shift_affinity(a.id, b.id, rng.uniform(-0.6, 0.8))
+        surv.shift_affinity(b.id, a.id, rng.uniform(-0.6, 0.8))
 
     # Court: the magistrate scores the debate -> preference signal.
     if kind == "debate" and judge is not None:
-        await _judge_debate(judge, a, b, topic, transcript, iid, db)
+        outcome = await _judge_debate(judge, a, b, topic, transcript, iid, db)
+        if surv is not None and outcome:
+            w, l = outcome
+            surv.shift_affinity(l, w, -2.0)    # losing stings; rivalry is real
+            surv.shift_affinity(w, l, 1.0)     # respect for a worthy opponent
 
     BUS.publish({"type": "interaction_end", "id": iid})
     return iid
@@ -187,3 +202,4 @@ async def _judge_debate(judge: Agent, a: Agent, b: Agent, topic, transcript, iid
     BUS.publish({"type": "judgement", "interaction": iid, "judge": judge.public(),
                  "a": a.id, "b": b.id, "score_a": sa, "score_b": sb,
                  "winner": winner, "reason": reason})
+    return (a.id, b.id) if winner == "a" else (b.id, a.id)
