@@ -29,7 +29,8 @@ def main(gen: int, incumbent: str):
         sys.exit("SFT failed")
     if run("train_dpo.py", "--gen", g, "--from-sft") != 0:
         sys.exit("DPO failed")
-    if run("eval_gate.py", "--gen", g, "--adapter", "dpo", "--incumbent", incumbent) == 0:
+    if run("eval_gate.py", "--gen", g, "--adapter", "dpo", "--incumbent", incumbent,
+           "--suite", "suite_v1.jsonl") == 0:
         run("export_gguf.py", "--gen", g, "--adapter", "dpo")
         print(f"\n✅ gen{gen} PROMOTED. Point the town at synapse-gen{gen}:")
         print(f"   set SYNAPSE_CHAT_MODEL=synapse-gen{gen} and restart the orchestrator.")
