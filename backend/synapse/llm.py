@@ -65,10 +65,15 @@ async def _ollama_chat(messages, model, temperature, max_tokens) -> str:
 async def _ollama_embed(text: str) -> np.ndarray:
     import httpx
     async with httpx.AsyncClient(timeout=60) as c:
-        r = await c.post(f"{CONFIG.ollama_url}/api/embeddings",
-                         json={"model": CONFIG.embed_model, "prompt": text})
-        r.raise_for_status()
-        v = np.asarray(r.json()["embedding"], dtype=np.float32)
+        for attempt in (0, 1):
+            r = await c.post(f"{CONFIG.ollama_url}/api/embeddings",
+                             json={"model": CONFIG.embed_model, "prompt": text})
+            r.raise_for_status()
+            v = np.asarray(r.json().get("embedding") or [], dtype=np.float32)
+            if v.size:                      # Ollama can return [] mid-restart
+                break
+    if not v.size:
+        raise RuntimeError("empty embedding from Ollama (server restarting?)")
     n = np.linalg.norm(v)
     return v / n if n else v
 

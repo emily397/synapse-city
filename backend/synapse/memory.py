@@ -41,7 +41,10 @@ class MemoryStream:
 
     async def observe(self, text: str, tick: int, kind: str = "observation") -> int:
         imp = heuristic_importance(text)
-        vec = await llm.embed(text)
+        try:
+            vec = await llm.embed(text)
+        except Exception:
+            return -1        # never store a memory with a broken embedding
         self._since_reflection += imp
         return self.db.add_memory(self.agent, tick, kind, text, imp, vec)
 
@@ -49,12 +52,17 @@ class MemoryStream:
         mems = self.db.memories_for(self.agent)
         if not mems:
             return []
-        qv = await llm.embed(query)
+        try:
+            qv = await llm.embed(query)
+        except Exception:
+            return []        # degrade to no-RAG rather than killing the conversation
         scored = []
         for m in mems:
             recency = _RECENCY_DECAY ** max(0, tick - m["tick"])
             importance = m["importance"] / 10.0
             v = m["vec"]
+            if v.shape != qv.shape or not v.size:
+                continue     # skip corrupt/legacy vectors instead of crashing
             denom = (np.linalg.norm(qv) * np.linalg.norm(v)) or 1.0
             relevance = float(np.dot(qv, v) / denom)
             s = (_W_RECENCY * recency + _W_IMPORTANCE * importance
