@@ -87,11 +87,28 @@ class DB:
     def _q(self, sql: str) -> str:
         return sql.replace("?", "%s") if self.pg else sql
 
+    def _pg_exec(self, sql, params, fetch=None):
+        # Neon suspends idle computes and drops the connection; reconnect once.
+        import psycopg
+        for attempt in (0, 1):
+            try:
+                with self.conn.cursor() as c:
+                    c.execute(sql, params)
+                    return c.fetchall() if fetch else None
+            except (psycopg.OperationalError, psycopg.InterfaceError):
+                if attempt:
+                    raise
+                from psycopg.rows import dict_row
+                try:
+                    self.conn.close()
+                except Exception:
+                    pass
+                self.conn = psycopg.connect(DATABASE_URL, row_factory=dict_row,
+                                            autocommit=True)
+
     def _all(self, sql, params=()) -> list[dict]:
         if self.pg:
-            with self.conn.cursor() as c:
-                c.execute(self._q(sql), params)
-                return c.fetchall()
+            return self._pg_exec(self._q(sql), params, fetch=True)
         return [dict(r) for r in self.conn.execute(sql, params).fetchall()]
 
     def _one(self, sql, params=()):
@@ -100,17 +117,15 @@ class DB:
 
     def _run(self, sql, params=()):
         if self.pg:
-            with self.conn.cursor() as c:
-                c.execute(self._q(sql), params)
+            self._pg_exec(self._q(sql), params)
         else:
             self.conn.execute(sql, params)
             self.conn.commit()
 
     def _insert(self, sql, params) -> int:
         if self.pg:
-            with self.conn.cursor() as c:
-                c.execute(self._q(sql) + " RETURNING id", params)
-                return c.fetchone()["id"]
+            return self._pg_exec(self._q(sql) + " RETURNING id", params,
+                                 fetch=True)[0]["id"]
         cur = self.conn.execute(sql, params)
         self.conn.commit()
         return cur.lastrowid
