@@ -60,21 +60,49 @@ export const useStore = create<State>((set, get) => ({
     return r.json();   // the new resident also arrives over WS as agent_added
   },
 
-  connect: () => {
-    // Runtime override: open  ...vercel.app/?ws=wss://host&api=https://host  to
-    // point the hosted frontend at ANY backend (e.g. your Nucbox tunnel) with no
-    // rebuild. Falls back to build-time env, then same-origin.
+  connect: async () => {
+    // Backend resolution, first healthy wins:
+    //   1. ?api=/?ws= URL params (no rebuild)
+    //   2. TUNNEL pointer file on GitHub main (the Nucbox supervisor pushes the
+    //      current quick-tunnel URL there whenever cloudflared restarts, so the
+    //      hosted frontend survives tunnel churn without redeploys)
+    //   3. build-time env, then same-origin; offline mock if none respond
     const params = new URLSearchParams(location.search);
-    if (params.get("api")) API_BASE = params.get("api") as string;
-    const wsParam = params.get("ws") || ENV.VITE_SYNAPSE_WS;
+    const candidates: { api: string; ws: string }[] = [];
+    if (params.get("api"))
+      candidates.push({ api: params.get("api")!,
+        ws: params.get("ws") || params.get("api")!.replace(/^http/, "ws") });
+    try {
+      const r = await fetch("https://raw.githubusercontent.com/emily397/synapse-city/main/TUNNEL?t="
+        + Date.now(), { signal: AbortSignal.timeout(4000), cache: "no-store" });
+      if (r.ok) {
+        const u = (await r.text()).trim();
+        if (u.startsWith("https://"))
+          candidates.push({ api: u, ws: u.replace(/^https/, "wss") });
+      }
+    } catch {}
+    if (ENV.VITE_SYNAPSE_API)
+      candidates.push({ api: ENV.VITE_SYNAPSE_API,
+        ws: ENV.VITE_SYNAPSE_WS || ENV.VITE_SYNAPSE_API.replace(/^http/, "ws") });
     const proto = location.protocol === "https:" ? "wss" : "ws";
-    const wsUrl = wsParam ? `${wsParam}/ws` : `${proto}://${location.host}/ws`;
+    candidates.push({ api: "", ws: `${proto}://${location.host}` });
+
+    let base: { api: string; ws: string } | null = null;
+    for (const c of candidates) {
+      try {
+        const r = await fetch(`${c.api}/api/models`,
+          { signal: AbortSignal.timeout(6000) });
+        if (r.ok) { base = c; break; }
+      } catch {}
+    }
+    if (!base) { startMock(get().apply); return; }
+    API_BASE = base.api;
 
     fetch(`${API_BASE}/api/state`).then((r) => r.json()).then((snap) => get().apply(snap))
       .catch(() => startMock(get().apply));
 
     try {
-      const ws = new WebSocket(wsUrl);
+      const ws = new WebSocket(`${base.ws}/ws`);
       ws.onopen = () => set({ connected: true });
       ws.onmessage = (m) => get().apply(JSON.parse(m.data));
       ws.onclose = () => set({ connected: false });
