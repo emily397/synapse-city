@@ -14,6 +14,13 @@ ADAPTERS.mkdir(parents=True, exist_ok=True)
 BASE_MODEL = os.getenv("SYNAPSE_BASE_MODEL", "unsloth/Qwen2.5-7B-Instruct-bnb-4bit")
 MAX_SEQ = int(os.getenv("SYNAPSE_MAX_SEQ", "2048"))
 REPLAY_FRACTION = float(os.getenv("SYNAPSE_REPLAY_FRACTION", "0.3"))
+# Per-resident growth: when set, all dataset paths get the resident suffix, so
+# a resident's LoRA trains ONLY on its own verified rows.
+RESIDENT = os.getenv("SYNAPSE_RESIDENT", "").strip()
+
+
+def _suffixed(suffix: str) -> str:
+    return f"{suffix}_{RESIDENT}" if RESIDENT else suffix
 
 
 def load_jsonl(path) -> list[dict]:
@@ -24,7 +31,8 @@ def load_jsonl(path) -> list[dict]:
 def with_replay(gen: int, suffix: str) -> list[dict]:
     """Anti-collapse anchor (SPIN pattern): current generation's data plus a
     replay sample of every prior generation, so the policy never drifts off the
-    distribution that produced it."""
+    distribution that produced it. Honors SYNAPSE_RESIDENT for personal runs."""
+    suffix = _suffixed(suffix)
     cur = load_jsonl(DATASETS / f"gen{gen}_{suffix}.jsonl")
     prior = []
     for p in sorted(glob.glob(str(DATASETS / f"gen*_{suffix}.jsonl"))):

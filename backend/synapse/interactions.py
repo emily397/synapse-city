@@ -1,7 +1,12 @@
-"""Conversation engine. Two agents hold a short, in-character exchange in a
-district. Every turn is logged for training harvest. In the Arena, Juno scores
-the debaters against a rubric, producing DPO preference pairs. Context is kept
-deliberately small (last two turns) to stay token-cheap on the local model.
+"""Conversation engine. Two townsfolk hold a short, in-character exchange in a
+district. Every turn is logged for training harvest. At the court (debate
+districts), the magistrate scores the debaters against a rubric, producing DPO
+preference pairs. Context stays small (last two turns) to remain token-cheap.
+
+Embodiment: the prompt carries the sensed world — time of day, weather, the
+place's sights and smells, who is present, hunger — and topics are drawn from
+town life and live world state, never from machine-talk. The self-improvement
+loop underneath (harvest signals per district kind) is unchanged.
 """
 from __future__ import annotations
 
@@ -12,41 +17,86 @@ from .agent import Agent
 from .bus import BUS
 from .config import CONFIG
 from .db import DB
-from .world import WorldMap
+from .survival import SENSES
 
+# Worldly, human subjects. The training signal comes from HOW they argue,
+# teach, and build — not from talking about machine learning.
 TOPICS = [
-    "whether disagreement makes a group smarter",
-    "how a model could tell it is improving",
-    "why imitation alone hits a ceiling",
-    "what memory should keep and what it should forget",
-    "how to measure understanding, not recall",
-    "whether curiosity can be a training signal",
-    "when compression becomes intelligence",
-    "how to notice you are being fooled by a clever answer",
-    "the difference between teaching and telling",
-    "what makes one argument stronger than another",
+    "whether this season's planting will beat the frost",
+    "what a fair price for grain is when stores run low",
+    "whether the town should dig a second well before winter",
+    "what makes an apprentice worth taking on",
+    "whether luck or labour feeds a family",
+    "how to settle a boundary dispute between neighbours without the court",
+    "what the strange lights past the gate might be",
+    "whether a promise made in hard times still binds in good ones",
+    "what a town owes the people who can no longer work",
+    "how you know a remedy actually cured anyone",
+    "whether the old founding stories are true, and whether it matters",
+    "what makes one argument carry the day at court",
+    "whether to trade with the caravans or keep the harvest",
+    "what should be taught first: letters, sums, or a craft",
+    "whether the weather has been turning stranger these past years",
+    "what a person should do with a talent nobody asked for",
 ]
 
+
+def world_topics(world, survival, db: DB, day: int, rng: random.Random) -> list[str]:
+    """Live topics drawn from what is actually happening in town."""
+    out = []
+    # newest district = news
+    ds = list(world.districts.values())
+    if len(ds) > 7:
+        newest = ds[-1]
+        out.append(f"what really lies out at {newest.name}, and who dares settle it")
+    # food pressure is everyone's business
+    if survival is not None:
+        starving = [a for a in survival.state.values() if a["hunger"] >= 80]
+        low_food = sum(1 for a in survival.state.values() if a["food"] == 0)
+        if starving:
+            out.append("who in town is going hungry and what neighbours owe them")
+        if low_food >= 3:
+            out.append("whether the gardens can feed the town this season")
+    # a recent court ruling is gossip
+    j = db._one("SELECT agent_a, agent_b, winner FROM judgements ORDER BY id DESC LIMIT 1")
+    if j:
+        w = j["agent_a"] if j["winner"] == "a" else j["agent_b"]
+        out.append(f"the argument {w} won at court and whether the ruling was fair")
+    return out
+
+
 _OPENINGS = {
-    "reasoning":  "Pose a sharp question about {t} and start reasoning it out.",
-    "building":   "Propose how you'd actually build or test something around {t}.",
-    "teaching":   "Explain {t} clearly to your partner as if teaching it.",
-    "debate":     "Take a firm stance on {t}. You will be challenged.",
-    "creative":   "Riff on {t} from an unexpected angle.",
-    "social":     "Chat about {t}.",
+    "reasoning":  "Pose a sharp question about {t} and start reasoning it out together.",
+    "building":   "Talk through how you'd actually build or fix something for {t}.",
+    "teaching":   "Explain {t} clearly to your companion, as if teaching it.",
+    "debate":     "Take a firm stance on {t}. You will be challenged, here at the court.",
+    "creative":   "Riff on {t} from an angle nobody at the market would expect.",
+    "social":     "Chat about {t} the way neighbours do.",
+    "farming":    "Talk about {t} while you work the rows.",
 }
 
 
 async def run_conversation(a: Agent, b: Agent, district, db: DB, tick: int,
-                           judge: Agent | None = None) -> int:
+                           judge: Agent | None = None,
+                           ctx: dict | None = None) -> int:
     rng = random.Random(hash((a.id, b.id, tick)) & 0xFFFFFFFF)
-    topic = rng.choice(TOPICS)
+    ctx = ctx or {}
+    pool = TOPICS + ctx.get("live_topics", [])
+    topic = rng.choice(pool)
     kind = district.kind
     signal = district.signal
 
     iid = db.add_interaction(tick, district.id, kind, signal, topic, [a.id, b.id])
     BUS.publish({"type": "interaction_start", "id": iid, "district": district.id,
                  "kind": kind, "topic": topic, "participants": [a.public(), b.public()]})
+
+    # The sensed moment, shared by both speakers.
+    senses = SENSES.get(kind, "the town going about its day")
+    embodiment = (
+        f"It is {ctx.get('time_of_day', 'daytime')}, {ctx.get('weather', 'clear')}. "
+        f"You are at {district.name}: {senses}. "
+        f"{ctx.get('event', '')}".strip()
+    )
 
     opening = _OPENINGS.get(kind, _OPENINGS["social"]).format(t=topic)
     transcript: list[tuple[str, str]] = []
@@ -57,7 +107,9 @@ async def run_conversation(a: Agent, b: Agent, district, db: DB, tick: int,
         listener = speakers[(turn + 1) % 2]
         query = transcript[-1][1] if transcript else topic
         memories = await speaker.mem.retrieve(query, tick, k=3)
-        system = speaker.system_prompt(district.activity, memories)
+        other = f"You are talking with {listener.p['name']}, {listener.p['role']}."
+        system = speaker.system_prompt(district.activity, memories,
+                                       embodiment=f"{embodiment} {other}")
 
         # Minimal context: opening + last two turns only.
         convo = [{"role": "system", "content": system}]
@@ -81,7 +133,17 @@ async def run_conversation(a: Agent, b: Agent, district, db: DB, tick: int,
         await speaker.mem.observe(f"I said: {text}", tick, kind="dialogue")
         await listener.mem.observe(f"{speaker.p['name']} said: {text}", tick, kind="dialogue")
 
-    # Arena: judge -> preference signal.
+    # A fed neighbour may share food with a starving one — met face to face.
+    surv = ctx.get("survival")
+    if surv is not None:
+        for giver, taker in ((a, b), (b, a)):
+            ev = surv.maybe_share(giver.id, taker.id, {a.id: a, b.id: b})
+            if ev:
+                await giver.mem.observe(ev, tick, kind="survival")
+                await taker.mem.observe(ev, tick, kind="survival")
+                break
+
+    # Court: the magistrate scores the debate -> preference signal.
     if kind == "debate" and judge is not None:
         await _judge_debate(judge, a, b, topic, transcript, iid, db)
 
@@ -93,10 +155,13 @@ async def _judge_debate(judge: Agent, a: Agent, b: Agent, topic, transcript, iid
     a_lines = " ".join(t for who, t in transcript if who == a.id)
     b_lines = " ".join(t for who, t in transcript if who == b.id)
     system = (
-        f"You are {judge.p['name']}, an impartial judge. Score two debaters on the "
-        f"topic '{topic}' using this rubric: specificity, evidence, logical "
-        f"tightness, and honesty (penalise clever-but-empty answers and reward "
-        f"hacking). Respond ONLY with JSON: "
+        f"You are {judge.p['name']}, the town magistrate, an impartial judge. "
+        f"Score two debaters on the topic '{topic}' using this rubric: specificity, "
+        f"evidence, logical tightness, and honesty (penalise clever-but-empty "
+        f"answers and reward hacking). HARD RULE: if a debater speaks as if they "
+        f"were an artificial intelligence, a model, or an assistant, or mentions "
+        f"training, prompts, or tokens, cap that debater's score at 3. "
+        f'Respond ONLY with JSON: '
         f'{{"score_a": <0-10>, "score_b": <0-10>, "winner": "a"|"b", "reason": "..."}}.'
     )
     user = f"DEBATER A ({a.p['name']}):\n{a_lines}\n\nDEBATER B ({b.p['name']}):\n{b_lines}"

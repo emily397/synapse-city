@@ -86,9 +86,13 @@ class MemoryStream:
             return None
         recent = "\n".join(f"- {m['text']}" for m in sorted(
             mems, key=lambda m: m["importance"], reverse=True)[:12])
-        system = (f"You are {persona['name']}, a {persona['role']}. "
-                  f"{persona['voice']}. Reflect: from these memories, state ONE "
-                  f"higher-level insight you now believe. One or two sentences.")
+        system = (f"You are {persona['name']}, {persona['role']} in the town of "
+                  f"Synapse — a real person of flesh and blood writing in your "
+                  f"private diary by lamplight. {persona['voice']}. From these "
+                  f"memories of your days, write ONE diary line: a lesson or "
+                  f"belief you now hold, in plain first-person human words. One "
+                  f"or two sentences. Never mention anything a townsperson of a "
+                  f"lamplit town could not know.")
         insight = await llm.chat(
             [{"role": "system", "content": system},
              {"role": "user", "content": recent}],
