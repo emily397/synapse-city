@@ -139,3 +139,32 @@ The `model` field per persona routes each agent's turns to that model via Ollama
 - **Backend** is a stateful, always-on process (sim loop + WebSocket + SQLite), so
   it runs on your **Nucbox / 3090 box**, not on serverless. Expose port 8000 to the
   deployed frontend, or just run the frontend locally next to it.
+
+## Full-stack live (frontend + backend + Neon)
+
+The backend is DB-agnostic: set `DATABASE_URL` to a **Neon** (Postgres) URL for
+durable, shared, cloud state; leave it unset for a local SQLite file. Everything
+else is identical.
+
+```bash
+# 1. durable DB: create a Neon project, copy its DATABASE_URL
+export DATABASE_URL="postgresql://...neon.tech/neondb?sslmode=require"
+
+# 2. host the always-on backend (it is a stateful WS + sim loop, so NOT serverless)
+#    pick one:
+#    a) your own box + public tunnel (best for the real Ollama town):
+cd backend && pip install -r requirements.txt
+./ops/serve_public.ps1                       # prints a https://<x>.trycloudflare.com URL
+#    b) a managed host (Fly): fly auth login && fly launch --no-deploy \
+#         && fly secrets set DATABASE_URL="..." && fly deploy
+#    c) Docker anywhere: docker build -t synapse backend && \
+#         docker run -e DATABASE_URL -p 8000:8000 synapse
+
+# 3. point the frontend at it and redeploy
+#    Vercel env: VITE_SYNAPSE_API=https://<backend>  VITE_SYNAPSE_WS=wss://<backend>
+cd frontend && vercel --prod
+```
+
+Now the deployed frontend streams a live town from your backend, which persists to
+Neon. Set `SYNAPSE_LLM_BACKEND=ollama` on the backend box to make the residents
+think with real local models (and the self-learning loop trains for real).

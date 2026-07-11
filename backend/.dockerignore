@@ -1,0 +1,8 @@
+run/
+**/__pycache__/
+*.pyc
+.venv/
+.venv-train/
+training/
+ops/
+tests/

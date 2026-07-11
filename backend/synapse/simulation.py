@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import random
 
-from . import harvest
+from . import harvest, worldgen
 from .agent import Agent
 from .bus import BUS
 from .config import CONFIG
@@ -34,6 +34,8 @@ class Simulation:
         self.generation = 0
         self.running = False
         self._convos: set[asyncio.Task] = set()
+        self._activity: dict[str, int] = {}      # kind -> recent conversation count
+        self._last_expand = -CONFIG.world_expand_cooldown
         self._seed_elo()
 
     # ------------------------------------------------------------------ #
@@ -117,6 +119,7 @@ class Simulation:
             await self._night_step()
         else:
             self._move_and_meet()
+            self._world_step()
 
     # ------------------------------------------------------------------ #
     def _move_and_meet(self):
@@ -131,6 +134,7 @@ class Simulation:
                 if not a.path:
                     a.status = "idle"
                     a.cooldown = 0
+                    self._grant_district_xp(nxt, 1)     # footfall feeds the place
             elif a.cooldown > 0:
                 a.cooldown -= 1
 
@@ -169,6 +173,8 @@ class Simulation:
 
     def _choose_destination(self, a: Agent) -> str:
         # Bias toward the Arena and the agent's home so meetings actually happen.
+        # Districts with an unopened gate pull curious agents outward.
+        gate_districts = self.world.frontier_districts()
         weights = []
         for did, d in self.world.districts.items():
             w = 1.0
@@ -178,6 +184,8 @@ class Simulation:
                 w += 2.5
             if d.kind == "rest":
                 w = 0.2
+            if did in gate_districts:
+                w += 1.2
             weights.append((did, w))
         r = self.rng.random() * sum(w for _, w in weights)
         acc = 0.0
@@ -187,9 +195,59 @@ class Simulation:
                 return did
         return a.p["home"]
 
+    # ------------------------------------------------------------------ #
+    # The world's own learning loop: places earn XP from real use and level
+    # up; curious agents standing at a frontier gate may open it, and the
+    # generator grows a district shaped by what the town has been doing.
+    def _world_step(self):
+        for f in list(self.world.frontiers):
+            if len(self.world.districts) >= CONFIG.world_max_districts:
+                return
+            if self.tick - self._last_expand < CONFIG.world_expand_cooldown:
+                return
+            here = [a for a in self.agents.values()
+                    if a.district == f["from"] and a.status == "idle"]
+            for a in here:
+                if self.rng.random() < CONFIG.world_curiosity:
+                    self._open_gate(f, a)
+                    return
+
+    def _open_gate(self, frontier: dict, opener: Agent):
+        bundle = worldgen.generate_district(self.world, frontier,
+                                            self._activity, self.rng)
+        if bundle is None:
+            self.world.frontiers.remove(frontier)      # no land that way
+            self.world.save()
+            return
+        self._last_expand = self.tick
+        self.world.add_district(**bundle)
+        d = bundle["district"]
+        BUS.publish({"type": "world_update", "kind": "district_discovered",
+                     "district": d, "road": bundle["road"],
+                     "frontiers": bundle["frontiers"],
+                     "opened": bundle["opened"],
+                     "by": opener.public(),
+                     "districts_total": len(self.world.districts)})
+        BUS.publish({"type": "toast",
+                     "text": f"{opener.p['name']} dared the {frontier['name']}: "
+                             f"{d['name']} exists now"})
+        # The discoverer walks through first.
+        opener.path = [d["id"]]
+        opener.status = "traveling"
+
+    def _grant_district_xp(self, district_id: str, amount: int):
+        new_level = self.world.grant_xp(district_id, amount)
+        if new_level:
+            d = self.world.districts[district_id]
+            BUS.publish({"type": "world_update", "kind": "district_levelup",
+                         "district_id": district_id, "level": new_level,
+                         "name": d.name, "color": d.color})
+
     def _start_conversation(self, a: Agent, b: Agent, district):
         a.status = b.status = "interacting"
         a.partner, b.partner = b.id, a.id
+        self._activity[district.kind] = self._activity.get(district.kind, 0) + 1
+        self._grant_district_xp(district.id, 3)
         judge = self.judge if district.kind == "debate" else None
 
         async def _runner():

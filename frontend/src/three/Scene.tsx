@@ -71,9 +71,9 @@ export function Scene() {
       <CameraDirector presenter={presenter} controls={controls} />
       {POST && (
         <EffectComposer>
-          <Bloom intensity={0.9} luminanceThreshold={0.55} luminanceSmoothing={0.2}
+          <Bloom intensity={0.5} luminanceThreshold={0.75} luminanceSmoothing={0.25}
                  mipmapBlur />
-          <Vignette eskil={false} offset={0.15} darkness={0.75} />
+          <Vignette eskil={false} offset={0.2} darkness={0.55} />
         </EffectComposer>
       )}
     </Canvas>

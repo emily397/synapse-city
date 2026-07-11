@@ -37,6 +37,11 @@ class Config:
     day_start_hour: int = 7
     seed: int = int(os.getenv("SYNAPSE_SEED", "1337"))
 
+    # --- self-evolving world ---
+    world_max_districts: int = int(os.getenv("SYNAPSE_MAX_DISTRICTS", "48"))
+    world_expand_cooldown: int = int(os.getenv("SYNAPSE_EXPAND_COOLDOWN", "45"))   # ticks between gate openings
+    world_curiosity: float = float(os.getenv("SYNAPSE_CURIOSITY", "0.10"))         # per idle agent, per tick, at a gate district
+
     # --- self-learning loop (Phase 2) ---
     harvest_min_score: float = 7.0              # SFT: keep exchanges the judge rates >= this /10
     dpo_margin: float = 2.0                     # DPO: min judge-score gap between chosen/rejected

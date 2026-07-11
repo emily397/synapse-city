@@ -1,6 +1,7 @@
-# Core orchestrator (Nucbox, CPU-only)
+# Core orchestrator (runs on the Nucbox / any host; CPU-only for mock, GPU box for Ollama)
 fastapi>=0.110
 uvicorn[standard]>=0.29
 httpx>=0.27
 numpy>=1.24
+psycopg[binary]>=3.2        # Postgres/Neon when DATABASE_URL is set (else SQLite)
 # training/ has its own requirements (runs on the RTX 3090); see backend/training/requirements-train.txt

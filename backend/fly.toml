@@ -1,0 +1,21 @@
+# Durable managed host for the always-on backend (WebSocket + sim loop).
+# One-time: `fly auth login`, then `fly launch --no-deploy` (accept this file),
+# `fly secrets set DATABASE_URL="<your Neon URL>"`, then `fly deploy`.
+app = "synapse-city-backend"
+primary_region = "sjc"
+
+[build]
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = false      # keep the town alive (stateful sim loop)
+  auto_start_machines = true
+  min_machines_running = 1
+
+[env]
+  SYNAPSE_LLM_BACKEND = "mock"    # set to "ollama" + OLLAMA_URL for real models
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
