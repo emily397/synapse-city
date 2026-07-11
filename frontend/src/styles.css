@@ -98,6 +98,12 @@ footer { grid-column: 1 / 4; display: flex; align-items: center; gap: 14px; }
 .district-label b { display: block; font-size: 13px; }
 .district-label span { font-size: 10px; color: #9fb0d0; }
 .district-label.active { box-shadow: 0 0 22px rgba(120,180,255,0.5); }
+.district-label .pips { display: block; font-style: normal; font-size: 9px;
+  letter-spacing: 2px; color: #ffd166; margin-top: 1px; }
+.gate-label { background: rgba(9,13,24,0.66); border: 1px solid rgba(127,212,255,0.45);
+  border-radius: 10px; padding: 4px 9px; font-size: 11px; color: #bfe9ff;
+  letter-spacing: 1px; white-space: nowrap; text-transform: uppercase;
+  box-shadow: 0 0 18px rgba(127,212,255,0.25); }
 .name-tag { background: rgba(9,13,24,0.8); border: 1px solid; border-radius: 20px;
   padding: 3px 9px; font-size: 12px; white-space: nowrap; }
 .name-tag i { color: #93a0bd; font-style: normal; font-size: 10px; margin-left: 4px; }

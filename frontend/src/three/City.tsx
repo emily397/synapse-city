@@ -4,6 +4,7 @@ import { Html, RoundedBox } from "@react-three/drei";
 import * as THREE from "three";
 import { useStore } from "../store";
 import { Landmark } from "./Landmark";
+import { DreamGate, Reveal } from "./WorldFX";
 import type { District } from "../types";
 
 function rngFrom(seed: number) {
@@ -77,41 +78,52 @@ function Neighbourhood({ d }: { d: District }) {
     const houses = Array.from({ length: houseCount }, (_, i) => {
       const a = (i / houseCount) * Math.PI * 2 + rnd() * 0.5;
       const rad = 4.5 + rnd() * 2.5;
-      return { pos: [d.pos.x + Math.cos(a) * rad, 0, d.pos.z + Math.sin(a) * rad] as [number, number, number],
+      return { pos: [Math.cos(a) * rad, 0, Math.sin(a) * rad] as [number, number, number],
         rot: -a + Math.PI / 2 + rand(-0.3, 0.3), scale: 0.9 + rnd() * 0.35 };
     });
     const trees = Array.from({ length: 6 }, () => ({
-      pos: [d.pos.x + rand(-8, 8), 0, d.pos.z + rand(-8, 8)] as [number, number, number],
+      pos: [rand(-8, 8), 0, rand(-8, 8)] as [number, number, number],
       pine: rnd() < 0.5 }));
     const bushes = Array.from({ length: 4 }, () => (
-      [d.pos.x + rand(-8, 8), 0.4, d.pos.z + rand(-8, 8)] as [number, number, number]));
+      [rand(-8, 8), 0.4, rand(-8, 8)] as [number, number, number]));
     const flowers = Array.from({ length: 10 }, () => ({
-      pos: [d.pos.x + rand(-9, 9), 0.25, d.pos.z + rand(-9, 9)] as [number, number, number],
+      pos: [rand(-9, 9), 0.25, rand(-9, 9)] as [number, number, number],
       color: FLOWERS[Math.floor(rnd() * FLOWERS.length)] }));
     return { houses, trees, bushes, flowers };
   }, [d.id]);
 
   const roof = lighten(d.color, 0.25);
+  const level = d.level ?? 1;
   return (
-    <group>
-      <mesh position={[d.pos.x, 0.02, d.pos.z]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
-        <circleGeometry args={[9.5, 48]} />
-        <meshStandardMaterial color={d.color} transparent opacity={0.16} />
-      </mesh>
-      {items.houses.map((h, i) => <Cottage key={i} pos={h.pos} rot={h.rot} roof={`#${roof.getHexString()}`} scale={h.scale} />)}
-      {items.trees.map((t, i) => <Tree key={i} pos={t.pos} pine={t.pine} />)}
-      {items.bushes.map((p, i) => (
-        <mesh key={i} position={p} castShadow><sphereGeometry args={[0.55, 10, 10]} />
-          <meshStandardMaterial color="#62c46e" /></mesh>
-      ))}
-      {items.flowers.map((f, i) => (
-        <mesh key={i} position={f.pos}><sphereGeometry args={[0.13, 8, 8]} />
-          <meshStandardMaterial color={f.color} emissive={f.color} emissiveIntensity={0.25} /></mesh>
-      ))}
-      <Html position={[d.pos.x, 8.5, d.pos.z]} center distanceFactor={44} style={{ pointerEvents: "none" }}>
+    <group position={[d.pos.x, 0, d.pos.z]}>
+      <Reveal bornAt={d.bornAt}>
+        <mesh position={[0, 0.02, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+          <circleGeometry args={[9.5, 48]} />
+          <meshStandardMaterial color={d.color} transparent opacity={level >= 4 ? 0.24 : 0.16} />
+        </mesh>
+        {level >= 4 && (
+          <mesh position={[0, 0.04, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+            <ringGeometry args={[9.0, 9.5, 48]} />
+            <meshBasicMaterial color={d.color} transparent opacity={0.5}
+              blending={THREE.AdditiveBlending} depthWrite={false} />
+          </mesh>
+        )}
+        {items.houses.map((h, i) => <Cottage key={i} pos={h.pos} rot={h.rot} roof={`#${roof.getHexString()}`} scale={h.scale} />)}
+        {items.trees.map((t, i) => <Tree key={i} pos={t.pos} pine={t.pine} />)}
+        {items.bushes.map((p, i) => (
+          <mesh key={i} position={p} castShadow><sphereGeometry args={[0.55, 10, 10]} />
+            <meshStandardMaterial color="#62c46e" /></mesh>
+        ))}
+        {items.flowers.map((f, i) => (
+          <mesh key={i} position={f.pos}><sphereGeometry args={[0.13, 8, 8]} />
+            <meshStandardMaterial color={f.color} emissive={f.color} emissiveIntensity={0.25} /></mesh>
+        ))}
+      </Reveal>
+      <Html position={[0, 8.5, 0]} center distanceFactor={44} style={{ pointerEvents: "none" }}>
         <div className="district-label" style={{ borderColor: d.color }}>
           <b style={{ color: d.color }}>{d.name}</b>
           <span>{d.activity}</span>
+          <em className="pips">{"◆".repeat(level)}{"◇".repeat(Math.max(0, 4 - level))}</em>
         </div>
       </Html>
     </group>
@@ -184,6 +196,7 @@ export function City() {
       <Roads world={world} />
       <group position={[0, 0, 0]} scale={2.1}><Landmark /></group>
       {world.districts.map((d) => <Neighbourhood key={d.id} d={d} />)}
+      {(world.frontiers ?? []).map((f) => <DreamGate key={f.id} f={f} />)}
     </group>
   );
 }
