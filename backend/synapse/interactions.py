@@ -38,6 +38,11 @@ TOPICS = [
     "what should be taught first: letters, sums, or a craft",
     "whether the weather has been turning stranger these past years",
     "what a person should do with a talent nobody asked for",
+    "what a fair trade looks like when one side is hungrier than the other",
+    "whether a roof and four walls are a right or something you earn",
+    "which single possession you would never trade away, and why",
+    "how to keep a home standing through storm season",
+    "whether hoarding food in good times is prudence or greed",
 ]
 
 
@@ -133,15 +138,21 @@ async def run_conversation(a: Agent, b: Agent, district, db: DB, tick: int,
         await speaker.mem.observe(f"I said: {text}", tick, kind="dialogue")
         await listener.mem.observe(f"{speaker.p['name']} said: {text}", tick, kind="dialogue")
 
-    # A fed neighbour may share food with a starving one — met face to face.
+    # A fed neighbour may share food with a starving one — met face to face —
+    # and surplus food can buy a possession off a hungry neighbour (barter).
     surv = ctx.get("survival")
     if surv is not None:
+        pair = {a.id: a, b.id: b}
         for giver, taker in ((a, b), (b, a)):
-            ev = surv.maybe_share(giver.id, taker.id, {a.id: a, b.id: b})
+            ev = surv.maybe_share(giver.id, taker.id, pair)
             if ev:
-                await giver.mem.observe(ev, tick, kind="survival")
-                await taker.mem.observe(ev, tick, kind="survival")
+                await a.mem.observe(ev, tick, kind="survival")
+                await b.mem.observe(ev, tick, kind="survival")
                 break
+        trade = surv.maybe_trade(a.id, b.id, pair, rng)
+        if trade:
+            await a.mem.observe(trade, tick, kind="survival")
+            await b.mem.observe(trade, tick, kind="survival")
 
     # Court: the magistrate scores the debate -> preference signal.
     if kind == "debate" and judge is not None:

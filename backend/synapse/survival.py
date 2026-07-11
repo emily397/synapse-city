@@ -84,6 +84,10 @@ def hunger_phrase(h: float) -> str:
     return "you are comfortably full"
 
 
+GOODS = ["a wool blanket", "a coil of rope", "lantern oil", "iron nails",
+         "dried herbs", "a clay jug", "good flint", "a sharpening stone"]
+
+
 class Survival:
     def __init__(self, db: DB, agent_ids: list[str], world=None):
         self.db = db
@@ -91,6 +95,11 @@ class Survival:
         self.event: dict | None = None       # active weather event
         self.event_until = 0
         db.ensure_survival_tables()
+        db._run("CREATE TABLE IF NOT EXISTS goods ("
+                " id INTEGER PRIMARY KEY AUTOINCREMENT, agent TEXT, item TEXT)"
+                if not db.pg else
+                "CREATE TABLE IF NOT EXISTS goods ("
+                " id SERIAL PRIMARY KEY, agent TEXT, item TEXT)")
         self.state: dict[str, dict] = {}
         for aid in agent_ids:
             row = db.get_survival(aid)
@@ -99,6 +108,7 @@ class Survival:
                        "harvests": 0, "withers": 0, "meals_shared": 0}
                 db.set_survival(**row)
             self.state[aid] = row
+            self._seed_goods(aid)
 
     # ---------------------------------------------------------------- #
     def add_agent(self, aid: str):
@@ -107,6 +117,7 @@ class Survival:
                    "harvests": 0, "withers": 0, "meals_shared": 0}
             self.db.set_survival(**row)
             self.state[aid] = row
+            self._seed_goods(aid)
 
     def hunger(self, aid: str) -> float:
         return self.state.get(aid, {}).get("hunger", 0.0)
@@ -117,12 +128,24 @@ class Survival:
     def is_starving(self, aid: str) -> bool:
         return self.hunger(aid) >= STARVING_AT
 
+    def goods_of(self, aid: str) -> list[str]:
+        return [r["item"] for r in
+                self.db._all("SELECT item FROM goods WHERE agent=?", (aid,))]
+
+    def _seed_goods(self, aid: str):
+        if not self.goods_of(aid):
+            rng = random.Random(aid)
+            for item in rng.sample(GOODS, 2):
+                self.db._run("INSERT INTO goods(agent,item) VALUES(?,?)", (aid, item))
+
     def status_line(self, aid: str) -> str:
         s = self.state[aid]
         food = s["food"]
         stores = (f"you carry {food} portion{'s' if food != 1 else ''} of food"
                   if food else "your food pouch is empty")
-        return f"{hunger_phrase(s['hunger'])}; {stores}"
+        goods = self.goods_of(aid)
+        owns = f"; among your possessions: {', '.join(goods)}" if goods else ""
+        return f"{hunger_phrase(s['hunger'])}; {stores}{owns}"
 
     # ---------------------------------------------------------------- #
     def current_weather(self, day: int) -> str:
@@ -163,6 +186,14 @@ class Survival:
                     out.append((aid, f"had {lost} portion{'s' if lost != 1 else ''} "
                                      f"of food spoiled by {ev['name']}"))
         # buildings: a random district takes damage the town will talk about
+        # shelter: a storm at night is felt through every roof
+        if ev["damage"]:
+            for aid, a in agents.items():
+                if a.status == "sleeping":
+                    self.state[aid]["hunger"] = min(
+                        100.0, self.state[aid]["hunger"] + 4.0)
+                    out.append((aid, f"was kept awake by {ev['name']} rattling "
+                                     f"the roof and walls all night"))
         if ev["damage"] and self.world is not None:
             candidates = [d for d in self.world.districts.values()
                           if d.kind not in ("rest",)]
@@ -192,7 +223,9 @@ class Survival:
                                             "food": START_FOOD, "harvests": 0,
                                             "withers": 0, "meals_shared": 0})
             was_starving = s["hunger"] >= STARVING_AT
-            s["hunger"] = min(100.0, s["hunger"] + (HUNGER_PER_TICK * (0.4 if is_night else 1.0)))
+            # shelter matters: a wool blanket makes the night cheaper on the body
+            night_rate = 0.25 if "a wool blanket" in self.goods_of(aid) else 0.4
+            s["hunger"] = min(100.0, s["hunger"] + (HUNGER_PER_TICK * (night_rate if is_night else 1.0)))
 
             # eat when hungry and carrying food
             if s["hunger"] >= EAT_AT and s["food"] > 0:
@@ -247,6 +280,32 @@ class Survival:
         return None
 
     # ---------------------------------------------------------------- #
+    def maybe_trade(self, a_id: str, b_id: str, agents: dict,
+                    rng: random.Random) -> str | None:
+        """Barter when two residents meet: surplus food buys a possession.
+        Objects change hands; both remember the deal."""
+        sa, sb = self.state.get(a_id), self.state.get(b_id)
+        if not sa or not sb or rng.random() > 0.35:
+            return None
+        # buyer: has surplus food; seller: hungry-ish with goods to part with
+        for buyer, seller in ((a_id, b_id), (b_id, a_id)):
+            bs, ss = self.state[buyer], self.state[seller]
+            goods = self.goods_of(seller)
+            if bs["food"] >= 3 and ss["food"] == 0 and ss["hunger"] >= EAT_AT and goods:
+                item = rng.choice(goods)
+                bs["food"] -= 1
+                ss["food"] += 1
+                self.db.set_survival(**bs)
+                self.db.set_survival(**ss)
+                self.db._run("DELETE FROM goods WHERE agent=? AND item=?", (seller, item))
+                self.db._run("INSERT INTO goods(agent,item) VALUES(?,?)", (buyer, item))
+                bn, sn = agents[buyer].p["name"], agents[seller].p["name"]
+                BUS.publish({"type": "toast",
+                             "text": f"{bn} traded food to {sn} for {item} 🤝"})
+                return (f"{bn} traded a portion of food to {sn} in exchange "
+                        f"for {item}")
+        return None
+
     def maybe_share(self, giver_id: str, taker_id: str, agents: dict) -> str | None:
         """Called when two residents meet: a fed neighbour shares with a
         starving one. Generosity with a cost — real social texture."""
