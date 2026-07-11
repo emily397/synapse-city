@@ -9,6 +9,8 @@ Uses Unsloth's built-in GGUF export (wraps llama.cpp).
 from __future__ import annotations
 
 import argparse
+import os
+import shutil
 import subprocess
 
 from common import BASE_MODEL, MAX_SEQ, ADAPTERS
@@ -31,11 +33,21 @@ def main(gen: int, which: str, quant: str, ollama_tag: str | None):
 
     tag = ollama_tag or f"synapse-gen{gen}"
     modelfile = gguf_dir / "Modelfile"
-    if modelfile.exists():
-        subprocess.run(["ollama", "create", tag, "-f", str(modelfile)], check=True)
+    if not modelfile.exists():
+        print(f"[warn] no Modelfile in {gguf_dir}; import the .gguf manually.")
+        return
+    if shutil.which("ollama"):
+        env = dict(os.environ)
+        url = os.getenv("SYNAPSE_OLLAMA_URL")
+        if url:  # let the CLI talk to a remote Ollama (WSL -> Windows host)
+            env["OLLAMA_HOST"] = url
+        subprocess.run(["ollama", "create", tag, "-f", str(modelfile)],
+                       check=True, env=env)
         print(f"[ok] ollama model created: {tag}")
     else:
-        print(f"[warn] no Modelfile in {gguf_dir}; import the .gguf manually.")
+        # WSL has no ollama CLI: the Windows-side handover script finishes this.
+        print(f"[handoff] no ollama CLI here. Windows side should run:\n"
+              f"  ollama create {tag} -f \"{modelfile}\"")
 
 
 if __name__ == "__main__":

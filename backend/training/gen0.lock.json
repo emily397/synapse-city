@@ -1,0 +1,43 @@
+﻿{
+    "frozen_at":  "2026-07-11T17:39:48",
+    "note":  "gen0 baseline. These exact tags+digests are the pre-training models. NEVER overwrite these tags; trained descendants get new synapse-genN tags.",
+    "town_default":  "qwen2.5:7b-instruct",
+    "judge":  "qwen2.5:14b",
+    "models":  [
+                   {
+                       "tag":  "qwen2.5:14b",
+                       "digest":  "7cdf5a0187d5c58cc5d369b255592f7841d1c4696d45a8c8a9489440385b22f6",
+                       "size_gb":  8.37
+                   },
+                   {
+                       "tag":  "qwen2.5:7b-instruct",
+                       "digest":  "845dbda0ea48ed749caafd9e6037047aa19acfcfd82e704d7ca97d631a0b697e",
+                       "size_gb":  4.36
+                   },
+                   {
+                       "tag":  "llama3.2:3b",
+                       "digest":  "a80c4f17acd55265feec403c7aef86be0c25983ab279d83f3bcd3abbcb5b8b72",
+                       "size_gb":  1.88
+                   },
+                   {
+                       "tag":  "phi4:14b",
+                       "digest":  "ac896e5b8b34a1f4efa7b14d7520725140d5512484457fab45d2a4ea14c69dba",
+                       "size_gb":  8.43
+                   },
+                   {
+                       "tag":  "hermes3:8b",
+                       "digest":  "4f6b83f30b62bc3d0cf9be09266db222805ee815c8fd7d8b38f863f655be78b7",
+                       "size_gb":  4.34
+                   },
+                   {
+                       "tag":  "nucbox-reasoning:latest",
+                       "digest":  "1864de1d15bb2a37364a406b0d7f69026c4df276f92717b009db12ddd348bd07",
+                       "size_gb":  8.37
+                   },
+                   {
+                       "tag":  "nucbox-coder:latest",
+                       "digest":  "983485be1eeddcc5ecc8db3ce09ff10151c0ff3a0c040afb17967b59d9adf646",
+                       "size_gb":  8.37
+                   }
+               ]
+}

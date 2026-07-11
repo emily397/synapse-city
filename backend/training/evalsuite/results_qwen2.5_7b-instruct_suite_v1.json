@@ -1,0 +1,68 @@
+{
+  "model": "qwen2.5:7b-instruct",
+  "n": 10,
+  "rate": 0.6,
+  "seconds": 43.7,
+  "results": [
+    {
+      "id": "arith_eval:1000000",
+      "family": "arith_eval",
+      "pass": false,
+      "detail": "got '34`'"
+    },
+    {
+      "id": "balanced_brackets:1000006",
+      "family": "balanced_brackets",
+      "pass": true,
+      "detail": "PASS\n"
+    },
+    {
+      "id": "caesar:1000002",
+      "family": "caesar",
+      "pass": true,
+      "detail": "PASS\n"
+    },
+    {
+      "id": "chunk_list:1000008",
+      "family": "chunk_list",
+      "pass": true,
+      "detail": "PASS\n"
+    },
+    {
+      "id": "digit_root:1000004",
+      "family": "digit_root",
+      "pass": false,
+      "detail": "got 'steps, number'"
+    },
+    {
+      "id": "invert_dict:1000000",
+      "family": "invert_dict",
+      "pass": true,
+      "detail": "PASS\n"
+    },
+    {
+      "id": "order_deduction:1000006",
+      "family": "order_deduction",
+      "pass": true,
+      "detail": "got 'Aria'"
+    },
+    {
+      "id": "rle_encode:1000002",
+      "family": "rle_encode",
+      "pass": true,
+      "detail": "[('w', 2), ('r', 4), ('x', 4)]\nPASS\n"
+    },
+    {
+      "id": "set_relation:1000008",
+      "family": "set_relation",
+      "pass": false,
+      "detail": "got '1,5'"
+    },
+    {
+      "id": "truth_table:1000004",
+      "family": "truth_table",
+      "pass": false,
+      "detail": "got 'False'"
+    }
+  ]
+}
