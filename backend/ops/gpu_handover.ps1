@@ -86,8 +86,9 @@ if (-not $DryRun -and -not (Test-Path $gsmMarker)) {
     "--model_args base_url=http://`${WINIP}:11434/v1/chat/completions,model=$Incumbent,num_concurrent=1 " +
     "--tasks gsm8k --limit 50 --apply_chat_template 2>&1 | tail -5"
   $gsm = wsl -d Ubuntu -u root -- bash -c $gsmBash
+  $gsmLine = [string]($gsm | Select-String "gsm8k|acc" | Select-Object -First 1)
   Add-Content $Report ("- {0} :: gsm8k slice ({1}) :: {2}" -f
-    (Get-Date -Format s), $Incumbent, (($gsm | Select-String "gsm8k|acc" | Select-Object -First 1) -replace '\s+', ' '))
+    (Get-Date -Format s), $Incumbent, ($gsmLine -replace '\s+', ' '))
 }
 
 if (-not (Test-Path $Report)) {

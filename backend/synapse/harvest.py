@@ -163,7 +163,15 @@ async def harvest_cycle(db: DB, current_gen: int, agents: dict) -> dict | None:
         return {"generation": current_gen, "sft_count": 0, "dpo_count": 0,
                 "elo": db.get_elo(), "note": "no harvestable data yet"}
 
-    gen = current_gen + 1
+    # No hollow generations: if nothing meaningfully new since the last stamp,
+    # refresh the current gen's files instead of minting a new number.
+    prev = db._one("SELECT gen, sft_count, dpo_count FROM generations "
+                   "ORDER BY gen DESC LIMIT 1")
+    if prev and abs(len(sft) - (prev["sft_count"] or 0)) < 10 \
+            and abs(len(dpo) - (prev["dpo_count"] or 0)) < 3:
+        gen = max(current_gen, prev["gen"])          # rewrite in place
+    else:
+        gen = current_gen + 1
     sft_path = DATASETS / f"gen{gen}_sft.jsonl"
     dpo_path = DATASETS / f"gen{gen}_dpo.jsonl"
     n_sft = _write_jsonl(sft_path, sft)
