@@ -9,10 +9,14 @@ chat() / embed() / complete_json().
 """
 from __future__ import annotations
 
+import asyncio
 import json
+import os
 import re
 import hashlib
 import random
+import time as _time
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -20,6 +24,35 @@ import numpy as np
 from .config import CONFIG
 
 EMBED_DIM = 256
+
+# While a GPU training cycle owns the card (ops/gpu_handover.ps1 holds this lock),
+# the eval-gate must be able to load the incumbent on the same 24GB GPU. If the
+# town keeps issuing Ollama calls (even from background tasks spawned before the
+# lock), the incumbent can't load and the gate rejects against a "dead baseline".
+# So EVERY model call funnels through here and SUSPENDS until the lock clears —
+# this is the one place that guarantees Ollama goes quiet during training.
+_TRAINING_LOCK = Path(os.getenv("SYNAPSE_TRAINING_LOCK",
+                                r"C:\Users\nirvana\.synapse\TRAINING.lock"))
+_lock_cache = {"t": -999.0, "v": False}
+
+
+def _training_active() -> bool:
+    now = _time.monotonic()
+    if now - _lock_cache["t"] > 2.0:       # cache 2s: avoid a stat() per call
+        _lock_cache["v"] = _TRAINING_LOCK.exists()
+        _lock_cache["t"] = now
+    return _lock_cache["v"]
+
+
+async def _await_training_done(max_wait: float = 3600.0) -> bool:
+    """Suspend the caller while a training cycle runs so we make NO Ollama calls.
+    Returns True if training finished within max_wait, False if it timed out
+    (safety valve — a cycle should never exceed ~1h)."""
+    waited = 0.0
+    while _training_active() and waited < max_wait:
+        await asyncio.sleep(3)
+        waited += 3
+    return not _training_active()
 
 
 # --------------------------------------------------------------------------- #
@@ -31,6 +64,9 @@ async def chat(messages: list[dict], *, model: str | None = None,
     temperature = CONFIG.temperature if temperature is None else temperature
     max_tokens = max_tokens or CONFIG.max_tokens
     if CONFIG.llm_backend == "ollama":
+        if _training_active():             # GPU is training: stay off Ollama
+            if not await _await_training_done():
+                return ""                  # still locked after the cap; skip turn
         return await _ollama_chat(messages, model, temperature, max_tokens)
     return _mock_chat(messages, temperature)
 
@@ -43,6 +79,9 @@ async def complete_json(messages: list[dict], *, model: str | None = None) -> di
 
 async def embed(text: str) -> np.ndarray:
     if CONFIG.llm_backend == "ollama":
+        if _training_active():             # GPU is training: stay off Ollama
+            if not await _await_training_done():
+                raise RuntimeError("embed skipped: training cycle still active")
         return await _ollama_embed(text)
     return _mock_embed(text)
 
