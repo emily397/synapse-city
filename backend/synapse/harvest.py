@@ -172,15 +172,17 @@ async def harvest_cycle(db: DB, current_gen: int, agents: dict) -> dict | None:
         gen = max(current_gen, prev["gen"])          # rewrite in place
     else:
         gen = current_gen + 1
-    sft_path = DATASETS / f"gen{gen}_sft.jsonl"
-    dpo_path = DATASETS / f"gen{gen}_dpo.jsonl"
-    n_sft = _write_jsonl(sft_path, sft)
-    n_dpo = _write_jsonl(dpo_path, dpo)
+    # build_sft/build_dpo already return the FULL cumulative corpus each time,
+    # so we OVERWRITE one rolling snapshot per stream (fixed 'gen1_' name)
+    # rather than minting a new versioned file every harvest. This keeps the
+    # dataset dir small and fast while the corpus stays complete and current.
+    n_sft = _write_jsonl(DATASETS / "gen1_sft.jsonl", sft)
+    n_dpo = _write_jsonl(DATASETS / "gen1_dpo.jsonl", dpo)
     # Per-resident growth: each resident's own verified rows, for its own LoRA.
     for rid, rows in sft_by_res.items():
-        _write_jsonl(DATASETS / f"gen{gen}_sft_{rid}.jsonl", rows)
+        _write_jsonl(DATASETS / f"gen1_sft_{rid}.jsonl", rows)
     for rid, rows in dpo_by_res.items():
-        _write_jsonl(DATASETS / f"gen{gen}_dpo_{rid}.jsonl", rows)
+        _write_jsonl(DATASETS / f"gen1_dpo_{rid}.jsonl", rows)
 
     trainable = CONFIG.llm_backend == "ollama"
     note = ("datasets built, ready to train" if trainable
