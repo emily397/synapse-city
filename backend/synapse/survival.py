@@ -102,6 +102,8 @@ class Survival:
                 " id SERIAL PRIMARY KEY, agent TEXT, item TEXT)")
         db._run("CREATE TABLE IF NOT EXISTS health ("
                 " agent TEXT PRIMARY KEY, hp REAL DEFAULT 100)")
+        db._run("CREATE TABLE IF NOT EXISTS homes ("
+                " agent TEXT PRIMARY KEY, quality REAL DEFAULT 0)")
         db._run("CREATE TABLE IF NOT EXISTS relations ("
                 " pair TEXT PRIMARY KEY, score REAL DEFAULT 0)")
         self.state: dict[str, dict] = {}
@@ -149,6 +151,30 @@ class Survival:
         if hp <= 60:
             return "you are unwell and feel it in your bones"
         return "your body is sound"
+
+    # --- homes: shelter you build with your own hands ------------------ #
+    def home_quality(self, aid: str) -> float:
+        r = self.db._one("SELECT quality FROM homes WHERE agent=?", (aid,))
+        return r["quality"] if r else 0.0
+
+    def build_home(self, aid: str, agents: dict) -> str | None:
+        """Spend effort (and a meal if you have one) improving your own home.
+        A better home is warmer at night — shelter you can feel."""
+        q = self.home_quality(aid)
+        if q >= 10:
+            return None
+        s = self.state[aid]
+        if s["food"] > 0:
+            s["food"] -= 1                    # building is hungry work
+        else:
+            s["hunger"] = min(100.0, s["hunger"] + 3.0)
+        self.db.set_survival(**s)
+        self.db._upsert("homes", "agent", ["agent", "quality"], (aid, q + 1))
+        name = agents[aid].p["name"]
+        BUS.publish({"type": "toast",
+                     "text": f"{name} improved their home 🏠 (quality {int(q+1)}/10)"})
+        return ("spent the day building on their own home; the roof is tighter "
+                "and the walls truer for it")
 
     # --- relations (others are real people who may not like you) ------- #
     def affinity(self, a: str, b: str) -> float:
@@ -263,8 +289,9 @@ class Survival:
                                             "food": START_FOOD, "harvests": 0,
                                             "withers": 0, "meals_shared": 0})
             was_starving = s["hunger"] >= STARVING_AT
-            # shelter matters: a wool blanket makes the night cheaper on the body
+            # shelter matters: blankets and a well-built home cheapen the night
             night_rate = 0.25 if "a wool blanket" in self.goods_of(aid) else 0.4
+            night_rate = max(0.1, night_rate - 0.02 * self.home_quality(aid))
             s["hunger"] = min(100.0, s["hunger"] + (HUNGER_PER_TICK * (night_rate if is_night else 1.0)))
 
             # the body keeps the score: starvation erodes health, care restores it

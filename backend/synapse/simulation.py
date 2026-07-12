@@ -204,6 +204,20 @@ class Simulation:
                     self._convos.add(t)
                     t.add_done_callback(self._convos.discard)
                     continue
+                # Builders: work on your own home when standing in it, or shore
+                # up the district you're in (real XP -> visible level-ups).
+                if (a.district == a.p["home"]
+                        and self.survival.hunger(a.id) < 60
+                        and self.rng.random() < 0.12):
+                    ev = self.survival.build_home(a.id, self.agents)
+                    if ev:
+                        t = asyncio.create_task(
+                            a.mem.observe(f"Today I {ev}.", self.tick, kind="survival"))
+                        self._convos.add(t)
+                        t.add_done_callback(self._convos.discard)
+                        continue
+                if self.rng.random() < 0.08:
+                    self._grant_district_xp(a.district, 2)     # renovation work
                 # A hungry farmer stays at the rows until the crop comes in.
                 if (self.world.districts[a.district].kind == "farming"
                         and self.survival.hunger(a.id) >= 60):
