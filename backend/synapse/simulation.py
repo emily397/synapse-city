@@ -198,7 +198,12 @@ class Simulation:
         for aid, ev in events:
             a = self.agents.get(aid)
             if a:
-                await a.mem.observe(f"Today I {ev}.", self.tick, kind="survival")
+                # embed in the background: doing it inline embeds once per event
+                # per agent per tick, blocking the whole loop (crawling ticks)
+                et = asyncio.create_task(
+                    a.mem.observe(f"Today I {ev}.", self.tick, kind="survival"))
+                self._convos.add(et)
+                et.add_done_callback(self._convos.discard)
 
         if self._is_night(h):
             await self._night_step()
