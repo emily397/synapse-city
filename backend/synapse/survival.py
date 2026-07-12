@@ -110,6 +110,7 @@ class Survival:
         self.event: dict | None = None       # active weather event
         self.event_until = 0
         self.drought_until = 0                # sustained disaster: crops keep dying
+        self._now_tick = 0
         db.ensure_survival_tables()
         db._run("CREATE TABLE IF NOT EXISTS goods ("
                 " id INTEGER PRIMARY KEY AUTOINCREMENT, agent TEXT, item TEXT)"
@@ -132,6 +133,9 @@ class Survival:
         db._run("CREATE TABLE IF NOT EXISTS animals (id TEXT PRIMARY KEY,"
                 " kind TEXT, district TEXT)")
         self._seed_animals()
+        r = db._one("SELECT v FROM townstore WHERE k='drought_until'")
+        if r:
+            self.drought_until = int(r["v"])   # survive restarts / train cycles
         db._run("CREATE TABLE IF NOT EXISTS inventions ("
                 " id INTEGER PRIMARY KEY AUTOINCREMENT, agent TEXT, name TEXT,"
                 " what TEXT, tick INTEGER)" if not db.pg else
@@ -310,6 +314,8 @@ class Survival:
         duration nearly everything planted withers before it ripens. Temporary,
         but long and cruel. Returns the town-felt event text."""
         self.drought_until = tick + duration
+        self.db._upsert("townstore", "k", ["k", "v"],
+                        ("drought_until", self.drought_until))
         killed = 0
         for aid in list(self.state):
             plot = self.db.get_plot(aid)
@@ -331,6 +337,7 @@ class Survival:
         if not self.drought_active(tick):
             if self.drought_until and tick >= self.drought_until:
                 self.drought_until = 0
+                self.db._upsert("townstore", "k", ["k", "v"], ("drought_until", 0))
                 BUS.publish({"type": "toast",
                              "text": "🌧️ The drought has broken at last; rain on the "
                                      "rows, and the town breathes again."})

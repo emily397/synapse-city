@@ -152,9 +152,18 @@ async def bounty(amount: int = 45):
     square. Watch how the residents decide to divide and consume it; it does
     not renew."""
     ev = SIM.survival.grant_bounty(amount)
-    for a in SIM.agents.values():
-        await a.mem.observe(ev, SIM.tick, kind="survival")
+    # observe in the background so the request returns instantly (embedding all
+    # residents' memories synchronously would block for many seconds)
+    asyncio.create_task(_broadcast_memory(ev))
     return {"granted": amount, "bounty_now": SIM.survival.bounty()}
+
+
+async def _broadcast_memory(text: str):
+    for a in SIM.agents.values():
+        try:
+            await a.mem.observe(text, SIM.tick, kind="survival")
+        except Exception:
+            pass
 
 
 @app.post("/api/drought")
@@ -163,8 +172,7 @@ async def drought(ticks: int = 120):
     and keeps new plantings from taking root for its duration. Temporary — it
     breaks on its own. Watch how they ration, trade, and fight to survive it."""
     ev = SIM.survival.start_drought(SIM.tick, ticks, SIM.agents)
-    for a in SIM.agents.values():
-        await a.mem.observe(ev, SIM.tick, kind="survival")
+    asyncio.create_task(_broadcast_memory(ev))
     return {"drought_ticks": ticks, "breaks_at_tick": SIM.survival.drought_until}
 
 
