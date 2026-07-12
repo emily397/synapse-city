@@ -16,7 +16,7 @@ $Lock   = "C:\Users\nirvana\.synapse\TRAINING.lock"
 $Repo   = "C:\synapse-city"
 $RunDir = "$Repo\backend\run"
 $Report = "$RunDir\REPORT.md"
-$JudgeTag = "qwen2.5:14b"
+$JudgeTag = "qwen2.5:32b"
 
 function Step($m) { Write-Host ("==> " + $m) }
 

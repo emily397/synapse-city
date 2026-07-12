@@ -31,7 +31,7 @@ from evalsuite.verify import verify                     # noqa: E402
 
 OLLAMA = "http://localhost:11434"
 MENTOR = "qwen2.5:32b"
-JUDGE = "qwen2.5:14b"
+JUDGE = "qwen2.5:32b"
 DB = HERE.parent / "run" / "synapse.db"
 TRAIN_SEED_MAX = 1_000_000
 
