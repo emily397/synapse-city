@@ -104,6 +104,12 @@ class Survival:
                 " agent TEXT PRIMARY KEY, hp REAL DEFAULT 100)")
         db._run("CREATE TABLE IF NOT EXISTS homes ("
                 " agent TEXT PRIMARY KEY, quality REAL DEFAULT 0)")
+        db._run("CREATE TABLE IF NOT EXISTS inventions ("
+                " id INTEGER PRIMARY KEY AUTOINCREMENT, agent TEXT, name TEXT,"
+                " what TEXT, tick INTEGER)" if not db.pg else
+                "CREATE TABLE IF NOT EXISTS inventions ("
+                " id SERIAL PRIMARY KEY, agent TEXT, name TEXT, what TEXT,"
+                " tick INTEGER)")
         db._run("CREATE TABLE IF NOT EXISTS relations ("
                 " pair TEXT PRIMARY KEY, score REAL DEFAULT 0)")
         self.state: dict[str, dict] = {}
@@ -175,6 +181,41 @@ class Survival:
                      "text": f"{name} improved their home 🏠 (quality {int(q+1)}/10)"})
         return ("spent the day building on their own home; the roof is tighter "
                 "and the walls truer for it")
+
+    # --- invention: the models author new things into their world ------ #
+    async def invent(self, agent, tick: int) -> str | None:
+        """The resident's own model dreams up a practical contraption from its
+        lived experience. The invention becomes a real possession, town news,
+        and a memory — model-authored culture entering the world."""
+        from . import llm
+        mems = await agent.mem.retrieve("problems and needs in my daily work", tick, k=4)
+        prompt = ("From your craft and the troubles of daily town life, invent ONE "
+                  "practical contraption a clever townsperson could actually build. "
+                  "Reply EXACTLY as:\nNAME: <short name>\nWHAT: <one sentence on "
+                  "what it does and who it helps>")
+        try:
+            out = await llm.chat(
+                [{"role": "system", "content": agent.system_prompt(
+                    "quiet tinkering at a workbench", mems)},
+                 {"role": "user", "content": prompt}],
+                model=agent.model, temperature=0.9, max_tokens=120)
+            name = what = None
+            for line in out.splitlines():
+                if line.strip().upper().startswith("NAME:"):
+                    name = line.split(":", 1)[1].strip()[:60]
+                elif line.strip().upper().startswith("WHAT:"):
+                    what = line.split(":", 1)[1].strip()[:200]
+            if not name or not what:
+                return None
+            self.db._run("INSERT INTO inventions(agent,name,what,tick) VALUES(?,?,?,?)",
+                         (agent.id, name, what, tick))
+            self.db._run("INSERT INTO goods(agent,item) VALUES(?,?)",
+                         (agent.id, name.lower()))
+            BUS.publish({"type": "toast",
+                         "text": f"💡 {agent.p['name']} invented {name}!"})
+            return f"invented {name}: {what}"
+        except Exception:
+            return None
 
     # --- relations (others are real people who may not like you) ------- #
     def affinity(self, a: str, b: str) -> float:

@@ -218,6 +218,20 @@ class Simulation:
                         continue
                 if self.rng.random() < 0.08:
                     self._grant_district_xp(a.district, 2)     # renovation work
+                # Invention: a healthy mind at a creative/building bench may
+                # author something new into the world (model-written culture).
+                if (self.world.districts[a.district].kind in ("creative", "building")
+                        and self.survival.hp(a.id) > 60
+                        and self.rng.random() < 0.04):
+                    async def _inv(ag=a):
+                        ev = await self.survival.invent(ag, self.tick)
+                        if ev:
+                            await ag.mem.observe(f"Today I {ev}", self.tick,
+                                                 kind="survival")
+                    t = asyncio.create_task(_inv())
+                    self._convos.add(t)
+                    t.add_done_callback(self._convos.discard)
+                    continue
                 # A hungry farmer stays at the rows until the crop comes in.
                 if (self.world.districts[a.district].kind == "farming"
                         and self.survival.hunger(a.id) >= 60):

@@ -62,6 +62,14 @@ def world_topics(world, survival, db: DB, day: int, rng: random.Random) -> list[
             out.append("who in town is going hungry and what neighbours owe them")
         if low_food >= 3:
             out.append("whether the gardens can feed the town this season")
+    # a fresh invention is the talk of the town
+    try:
+        inv = db._one("SELECT agent, name, what FROM inventions ORDER BY id DESC LIMIT 1")
+        if inv:
+            out.append(f"the new contraption called '{inv['name']}' and whether "
+                       f"it will actually work")
+    except Exception:
+        pass
     # a recent court ruling is gossip
     j = db._one("SELECT agent_a, agent_b, winner FROM judgements ORDER BY id DESC LIMIT 1")
     if j:
