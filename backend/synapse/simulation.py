@@ -35,10 +35,14 @@ class Simulation:
         for a in self.agents.values():
             a.survival = self.survival
         self.rng = random.Random(CONFIG.seed)
-        self.tick = 0
-        self.minutes = CONFIG.day_start_hour * 60
-        self.day = 1
-        self.generation = 0
+        # the town's time survives restarts: continuity of days is continuity
+        # of their world
+        self.db._run("CREATE TABLE IF NOT EXISTS simstate (k TEXT PRIMARY KEY, v REAL)")
+        st = {r["k"]: r["v"] for r in self.db._all("SELECT k, v FROM simstate")}
+        self.tick = int(st.get("tick", 0))
+        self.minutes = int(st.get("minutes", CONFIG.day_start_hour * 60))
+        self.day = int(st.get("day", 1))
+        self.generation = int(st.get("generation", 0))
         self.running = False
         self._convos: set[asyncio.Task] = set()
         self._activity: dict[str, int] = {}      # kind -> recent conversation count
@@ -111,6 +115,9 @@ class Simulation:
                 await self._harvest()                    # live ELO + rolling datasets
             if self.tick % 5 == 0:
                 BUS.publish({"type": "stats", **self._stats()})
+                for k, v in (("tick", self.tick), ("minutes", self.minutes),
+                             ("day", self.day), ("generation", self.generation)):
+                    self.db._upsert("simstate", "k", ["k", "v"], (k, v))
             await asyncio.sleep(CONFIG.tick_seconds)
 
     def stop(self):
