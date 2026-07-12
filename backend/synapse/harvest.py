@@ -196,7 +196,8 @@ async def harvest_cycle(db: DB, current_gen: int, agents: dict) -> dict | None:
 
     return {
         "generation": gen, "sft_count": n_sft, "dpo_count": n_dpo,
-        "sft_path": str(sft_path), "dpo_path": str(dpo_path),
+        "sft_path": str(DATASETS / "gen1_sft.jsonl"),
+        "dpo_path": str(DATASETS / "gen1_dpo.jsonl"),
         "per_resident": {rid: len(rows) for rid, rows in sft_by_res.items()},
         "fiction_breaks_excluded": fiction_breaks,
         "elo": db.get_elo(), "trainable": trainable, "note": note,

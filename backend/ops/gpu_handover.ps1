@@ -55,15 +55,50 @@ if (-not $DryRun) {
   Write-Host ("    train_cycle exit: " + $trainExit)
 
   # -- 4. if the gate promoted, register the GGUF with Windows Ollama --------
+  # Resident cycles namespace BOTH the adapter tree (adapters\<res>\...) and the
+  # Ollama tag (<res>-gen<N>). Unsloth also sometimes appends an extra "_gguf" to
+  # the export dir, so we SEARCH for the real Modelfile rather than hard-coding a
+  # path (the old hard-coded path is why promotions never registered).
   $promotedFile = "$RunDir\promoted.json"
-  $modelfile = "$RunDir\adapters\gen$Gen-dpo-gguf\Modelfile"
-  if ((Test-Path $promotedFile) -and (Test-Path $modelfile)) {
+  if ($Resident) {
+    $searchRoot = "$RunDir\adapters\$Resident"
+    $regTag = "$Resident-gen$Gen"
+  } else {
+    $searchRoot = "$RunDir\adapters"
+    $regTag = "synapse-gen$Gen"
+  }
+  $modelfile = $null
+  if (Test-Path $searchRoot) {
+    $modelfile = Get-ChildItem $searchRoot -Recurse -Filter "Modelfile" -ErrorAction SilentlyContinue |
+      Where-Object { $_.DirectoryName -match "gen$Gen-dpo" } |
+      Sort-Object LastWriteTime | Select-Object -Last 1 | ForEach-Object { $_.FullName }
+  }
+  if ((Test-Path $promotedFile) -and $modelfile -and (Test-Path $modelfile)) {
     $pj = Get-Content $promotedFile -Raw | ConvertFrom-Json
     if ($pj.gen -eq $Gen) {
-      Step "PROMOTED: registering synapse-gen$Gen in Ollama"
-      ollama create "synapse-gen$Gen" -f $modelfile
-      $promoted = $true
+      Step "PROMOTED: registering $regTag in Ollama (from $modelfile)"
+      # cd into the gguf dir so the Modelfile's relative FROM resolves
+      Push-Location (Split-Path $modelfile)
+      ollama create "$regTag" -f $modelfile
+      $regExit = $LASTEXITCODE
+      Pop-Location
+      if ($regExit -eq 0) {
+        $promoted = $true
+        # verify it actually landed in Ollama (no more phantom promotions)
+        Start-Sleep 2
+        $tags = (Invoke-RestMethod http://localhost:11434/api/tags -TimeoutSec 15).models.name
+        if ($tags -contains "${regTag}:latest" -or $tags -contains $regTag) {
+          Step "VERIFIED: $regTag is live in Ollama"
+        } else {
+          Write-Warning "register reported success but $regTag not in /api/tags"
+        }
+      } else {
+        Write-Warning "ollama create failed for $regTag (exit $regExit)"
+      }
     }
+  } elseif (Test-Path $promotedFile) {
+    $pj = Get-Content $promotedFile -Raw | ConvertFrom-Json
+    if ($pj.gen -eq $Gen) { Write-Warning "PROMOTED gen$Gen but no Modelfile found under $searchRoot — export may have failed" }
   }
   # -- 5. report line ---------------------------------------------------------
   $evalFile = "$RunDir\eval\gen$Gen.json"

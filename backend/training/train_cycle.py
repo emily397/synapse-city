@@ -34,6 +34,12 @@ BASE_MAP = {
     "llama3.2:3b": "unsloth/Llama-3.2-3B-Instruct-bnb-4bit",
     "phi4:14b": "unsloth/phi-4-bnb-4bit",
     "hermes3:8b": "unsloth/Hermes-3-Llama-3.1-8B-bnb-4bit",
+    "qwen2.5-coder:7b": "unsloth/Qwen2.5-Coder-7B-Instruct-bnb-4bit",
+    "qwen2.5:3b-instruct": "unsloth/Qwen2.5-3B-Instruct-bnb-4bit",
+    "gemma3:12b": "unsloth/gemma-3-12b-it-bnb-4bit",
+    # aya-expanse (Cohere) — best-effort base; if Unsloth can't load this arch the
+    # cycle logs a load error rather than silently skipping (see gate check).
+    "aya-expanse:8b": "unsloth/aya-expanse-8b",
     # nucbox customs: customised from these bases (adjust if yours differ)
     "nucbox-reasoning:latest": "unsloth/DeepSeek-R1-Distill-Qwen-14B-bnb-4bit",
     "nucbox-coder:latest": "unsloth/Qwen2.5-Coder-14B-Instruct-bnb-4bit",
