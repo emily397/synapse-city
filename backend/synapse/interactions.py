@@ -11,6 +11,20 @@ loop underneath (harvest signals per district kind) is unchanged.
 from __future__ import annotations
 
 import random
+import re
+
+_STAGE = re.compile(r"\*[^*]*\*")
+_FILLER = re.compile(r"^\s*(well now,?|ah,?|hmm,?|oh,?|you see,?|indeed,?)\s*", re.I)
+
+
+def _tighten(text: str) -> str:
+    """Strip stage directions and throat-clearing so lines stay crisp and real."""
+    text = _STAGE.sub("", text or "").strip()
+    prev = None
+    while text != prev:
+        prev = text
+        text = _FILLER.sub("", text).strip()
+    return text
 
 from . import llm
 from .agent import Agent
@@ -170,7 +184,9 @@ async def run_conversation(a: Agent, b: Agent, district, db: DB, tick: int,
                 role = "assistant" if who == speaker.id else "user"
                 convo.append({"role": role, "content": txt})
 
-        text = await llm.chat(convo, model=speaker.model, max_tokens=150)
+        text = _tighten(await llm.chat(convo, model=speaker.model, max_tokens=80))
+        if not text:
+            text = "..."
         prompt_text = convo[-1]["content"]
         db.add_exchange(iid, turn, speaker.id, prompt_text, text)
         transcript.append((speaker.id, text))
@@ -204,9 +220,11 @@ async def run_conversation(a: Agent, b: Agent, district, db: DB, tick: int,
         # ordinary chemistry: every meeting nudges how they feel about each other
         surv.shift_affinity(a.id, b.id, rng.uniform(-0.6, 0.8))
         surv.shift_affinity(b.id, a.id, rng.uniform(-0.6, 0.8))
-        # company is a joy: good conversation lifts the spirits (dopamine)
-        surv.add_joy(a.id, 3)
-        surv.add_joy(b.id, 3)
+        # company is a joy: real conversation is the town's biggest dopamine
+        # source, and it hits harder with someone you actually like.
+        for me, you in ((a, b), (b, a)):
+            lift = 8.0 + max(0.0, surv.affinity(me.id, you.id))   # friends feel better
+            surv.add_joy(me.id, lift)
 
     # The magistrate scores debates, lessons, and build-talk -> preference signal.
     if judge is not None:
@@ -215,9 +233,9 @@ async def run_conversation(a: Agent, b: Agent, district, db: DB, tick: int,
             w, l = outcome
             surv.shift_affinity(l, w, -2.0)    # losing stings; rivalry is real
             surv.shift_affinity(w, l, 1.0)     # respect for a worthy opponent
-            surv.earn(w, 5)                    # winning at court pays a purse
-            surv.add_joy(w, 12)                # and feels wonderful
-            surv.add_joy(l, -6)                # losing stings the mood too
+            surv.earn(w, 6)                    # winning at court pays a purse
+            surv.add_joy(w, 20)               # victory is euphoric
+            surv.add_joy(l, -10)              # and defeat genuinely hurts
 
     BUS.publish({"type": "interaction_end", "id": iid})
     return iid

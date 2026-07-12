@@ -75,7 +75,13 @@ class Agent:
             f"{p['voice']}. Your nature: {', '.join(p['traits'])}. "
             f"What drives you: {p['goal']}. {IDENTITY_RULE} {NATURE_RULE}{body} "
             f"{embodiment} "
-            f"Speak in your own human voice, 1-3 sentences, concrete and alive."
+            f"HOW YOU TALK: like a real person mid-conversation. One or two "
+            f"sentences, tight and specific. Say something that actually MOVES "
+            f"the talk forward: a real opinion, a question that bites, a fact, a "
+            f"plan, a disagreement. React to the exact thing just said, do not "
+            f"restate it. No stage directions or asterisks, no throat-clearing "
+            f"('Well now,' 'Ah,'), no flowery filler, no repeating yourself. If "
+            f"you have nothing new to add, be blunt or change the subject."
             f"{mem}"
         )
 

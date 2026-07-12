@@ -91,8 +91,8 @@ class ProvingGrounds:
                 if ok:
                     await self.library.maybe_author_skill(agent, fam, tick)
             if self.survival is not None and ok:
-                self.survival.earn(aid, 2)          # solved work pays
-                self.survival.add_joy(aid, 6)       # and satisfies
+                self.survival.earn(aid, 3)          # solved work pays
+                self.survival.add_joy(aid, 14)      # accomplishment is a real high
             self.db._run(
                 "INSERT INTO attempts(agent,family,seed,tick,pass,prompt,response)"
                 " VALUES(?,?,?,?,?,?,?)",
