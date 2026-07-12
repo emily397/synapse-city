@@ -90,7 +90,19 @@ def main(gen: int, which: str, incumbent: str, suite: str | None = None):
         return tokenizer.decode(out[0][ids.shape[1]:], skip_special_tokens=True).strip()
 
     if suite:
-        return _suite_gate(gen, challenger_gen, incumbent, suite)
+        def free_challenger():
+            # release the challenger's VRAM so a large incumbent can load on the
+            # same 24GB card (they cannot both be resident at once for 14B+)
+            import gc
+            import torch
+            nonlocal model, tokenizer
+            try:
+                del model, tokenizer
+            except Exception:
+                pass
+            gc.collect()
+            torch.cuda.empty_cache()
+        return _suite_gate(gen, challenger_gen, incumbent, suite, free_challenger)
 
     wins = 0.0
     records = []
@@ -122,55 +134,70 @@ def main(gen: int, which: str, incumbent: str, suite: str | None = None):
     return promote
 
 
-def _suite_gate(gen: int, challenger_gen, incumbent: str, suite: str) -> bool:
-    """Execution-verified gate: challenger vs incumbent on the frozen held-out
-    suite. Promote only if (a) challenger's pass rate is >= incumbent's and
-    (b) a one-sided sign test over discordant tasks rejects luck (p < alpha)."""
+def _suite_gate(gen: int, challenger_gen, incumbent: str, suite: str,
+                free_challenger) -> bool:
+    """Execution-verified gate, TWO-PHASE so challenger and incumbent never
+    fight for VRAM: (1) generate every challenger answer while its weights are
+    on the GPU, (2) FREE the challenger, (3) load the incumbent and answer the
+    same tasks. Promote only if challenger's pass rate >= incumbent's AND a
+    one-sided sign test over discordant tasks rejects luck (p < alpha)."""
     import sys as _sys
+    import time as _t
     _sys.path.insert(0, str(Path(__file__).resolve().parent))
     from evalsuite.run_suite import SYSTEM, load_suite, ollama_chat
     from evalsuite.verify import verify
 
     tasks = load_suite(Path(__file__).resolve().parent / "evalsuite" / suite)
-    # incumbent must actually be servable: warm it up, fail loudly if not.
-    # (a dead incumbent scored 0% in gen1 and silently corrupted the gate)
-    for _ in range(3):
+
+    # --- PHASE 1: challenger answers (its weights are in VRAM now) ---------
+    ch_ok_list = []
+    for i, t in enumerate(tasks, 1):
         try:
-            ollama_chat(incumbent, "say OK", )
+            out = challenger_gen(t["prompt"], sys_prompt=SYSTEM,
+                                 max_new=700, temp=0.0)
+            ok, _ = verify(t, out)
+        except Exception:                            # noqa: BLE001
+            ok = False
+        ch_ok_list.append(bool(ok))
+        if i % 40 == 0:
+            print(f"[gate] challenger {i}/{len(tasks)}")
+
+    # --- free the challenger so the incumbent can load on the same card ----
+    free_challenger()
+    _t.sleep(3)
+
+    # incumbent must actually be servable now that VRAM is free; give a big
+    # model generous time to load, but never gate against a dead baseline.
+    for _ in range(8):
+        try:
+            ollama_chat(incumbent, "say OK")
             break
         except Exception:
-            import time as _t
             _t.sleep(20)
     else:
         raise SystemExit(f"incumbent {incumbent} unreachable — refusing to gate "
                          f"against a dead baseline")
-    ch_wins = inc_wins = 0
-    ch_pass = inc_pass = 0
-    records = []
+
+    # --- PHASE 2: incumbent answers ---------------------------------------
+    inc_ok_list = []
     for i, t in enumerate(tasks, 1):
-        try:
-            ch_out = challenger_gen(t["prompt"], sys_prompt=SYSTEM,
-                                    max_new=700, temp=0.0)
-            ch_ok, _ = verify(t, ch_out)
-        except Exception:                            # noqa: BLE001
-            ch_ok = False
-        inc_ok = False
-        for _try in range(2):                        # retry once: never let a
-            try:                                     # transient error score 0
-                inc_ok, _ = verify(t, ollama_chat(incumbent, t["prompt"]))
+        ok = False
+        for _try in range(2):
+            try:
+                ok, _ = verify(t, ollama_chat(incumbent, t["prompt"]))
                 break
             except Exception:                        # noqa: BLE001
-                pass
-        ch_pass += ch_ok
-        inc_pass += inc_ok
-        if ch_ok and not inc_ok:
-            ch_wins += 1
-        elif inc_ok and not ch_ok:
-            inc_wins += 1
-        records.append({"id": t["id"], "challenger": ch_ok, "incumbent": inc_ok})
-        if i % 20 == 0:
-            print(f"[gate] {i}/{len(tasks)}  ch {ch_pass}  inc {inc_pass}")
+                _t.sleep(3)
+        inc_ok_list.append(bool(ok))
+        if i % 40 == 0:
+            print(f"[gate] incumbent {i}/{len(tasks)}")
 
+    ch_pass = sum(ch_ok_list)
+    inc_pass = sum(inc_ok_list)
+    ch_wins = sum(1 for c, ii in zip(ch_ok_list, inc_ok_list) if c and not ii)
+    inc_wins = sum(1 for c, ii in zip(ch_ok_list, inc_ok_list) if ii and not c)
+    records = [{"id": tasks[i]["id"], "challenger": ch_ok_list[i],
+                "incumbent": inc_ok_list[i]} for i in range(len(tasks))]
     n = len(tasks)
     p = _sign_test_p(ch_wins, inc_wins)
     promote = ch_pass >= inc_pass and p < SUITE_ALPHA
