@@ -643,18 +643,18 @@ class Survival:
                 s["hunger"] = max(0.0, s["hunger"] - MEAL_RESTORES)
                 self.add_joy(aid, 4)                     # a meal lifts the spirit
                 events.append((aid, "ate a meal from their pouch"))
+            elif not was_starving and s["hunger"] >= STARVING_AT:
+                events.append((aid, "is starving and needs to find food"))
+                BUS.publish({"type": "toast",
+                             "text": f"{a.p['name']} is starving 🥀"})
+
             # the dopamine curve: mood fades on its own, and boredom/isolation
             # (no fresh stimulus for a while) drains it hard, driving them to
             # seek company, work, and excitement.
             bored = getattr(a, "bored", 0)
             drain = 0.5 + (0.18 * min(bored, 15))        # lonelier = steeper fall
-            # having money is its own quiet contentment; being broke gnaws
-            drain += -0.2 if self.coin(aid) >= 15 else 0.3
+            drain += -0.2 if self.coin(aid) >= 15 else 0.3  # money = quiet content
             self.add_joy(aid, -drain)
-            elif not was_starving and s["hunger"] >= STARVING_AT:
-                events.append((aid, "is starving and needs to find food"))
-                BUS.publish({"type": "toast",
-                             "text": f"{a.p['name']} is starving 🥀"})
 
             # work the gardens when standing in a farming district
             district = getattr(a, "district", None)
