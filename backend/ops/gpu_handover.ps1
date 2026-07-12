@@ -9,6 +9,7 @@
 param(
     [int]$Gen = 1,
     [string]$Incumbent = "qwen2.5:7b-instruct",
+    [string]$Resident = "",
     [switch]$DryRun
 )
 $ErrorActionPreference = "Stop"
@@ -47,7 +48,9 @@ if (-not $DryRun) {
           "cd /mnt/c/synapse-city/backend/training && " +
           "SYNAPSE_OLLAMA_URL=http://`${WINIP}:11434 " +
           "/root/proprietary-model/.venv/bin/python train_cycle.py " +
-          "--gen $Gen --incumbent '$Incumbent' 2>&1 | tee /root/train_gen$Gen.log"
+          "--gen $Gen --incumbent '$Incumbent' " +
+          $(if ($Resident) { "--resident '$Resident' " } else { "" }) +
+          "2>&1 | tee /root/train_gen$Gen$Resident.log"
   wsl -d Ubuntu -u root -- bash -c $bash
   $trainExit = $LASTEXITCODE
   Write-Host ("    train_cycle exit: " + $trainExit)
