@@ -87,6 +87,21 @@ def hunger_phrase(h: float) -> str:
 GOODS = ["a wool blanket", "a coil of rope", "lantern oil", "iron nails",
          "dried herbs", "a clay jug", "good flint", "a sharpening stone"]
 
+# Wild foliage a resident might identify while foraging the perimeter. Finding
+# a NEW one adds it to the town's plantable seed stock — the world's flora grows
+# because they investigated it.
+WILD_FLORA = ["bittercress", "marsh samphire", "hedge garlic", "fat-hen greens",
+              "sorrel", "pignut", "sea beet", "nettle tops", "wild leek",
+              "hawthorn haw", "burdock root", "chicory"]
+
+ANIMALS = [("sheep", "gardens"), ("sheep", "gardens"), ("goat", "gardens"),
+           ("goat", "halcyon_mill"), ("hen", "plaza"), ("hen", "plaza"),
+           ("pig", "gardens"), ("dog", "plaza"), ("cat", "school"),
+           ("crow", "vesper_observatory")]
+
+START_COIN = 10.0
+LAND_PRICE = 25.0
+
 
 class Survival:
     def __init__(self, db: DB, agent_ids: list[str], world=None):
@@ -105,6 +120,17 @@ class Survival:
         db._run("CREATE TABLE IF NOT EXISTS homes ("
                 " agent TEXT PRIMARY KEY, quality REAL DEFAULT 0)")
         db._run("CREATE TABLE IF NOT EXISTS townstore (k TEXT PRIMARY KEY, v REAL)")
+        db._run("CREATE TABLE IF NOT EXISTS wallet ("
+                " agent TEXT PRIMARY KEY, coin REAL DEFAULT 0, joy REAL DEFAULT 50,"
+                " owns_land INTEGER DEFAULT 0)")
+        db._run("CREATE TABLE IF NOT EXISTS flora ("
+                " id INTEGER PRIMARY KEY AUTOINCREMENT, agent TEXT, name TEXT,"
+                " tick INTEGER)" if not db.pg else
+                "CREATE TABLE IF NOT EXISTS flora ("
+                " id SERIAL PRIMARY KEY, agent TEXT, name TEXT, tick INTEGER)")
+        db._run("CREATE TABLE IF NOT EXISTS animals (id TEXT PRIMARY KEY,"
+                " kind TEXT, district TEXT)")
+        self._seed_animals()
         db._run("CREATE TABLE IF NOT EXISTS inventions ("
                 " id INTEGER PRIMARY KEY AUTOINCREMENT, agent TEXT, name TEXT,"
                 " what TEXT, tick INTEGER)" if not db.pg else
@@ -140,6 +166,113 @@ class Survival:
 
     def is_starving(self, aid: str) -> bool:
         return self.hunger(aid) >= STARVING_AT
+
+    # --- money, land, and joy ------------------------------------------ #
+    def _wallet(self, aid: str) -> dict:
+        r = self.db._one("SELECT coin, joy, owns_land FROM wallet WHERE agent=?", (aid,))
+        if r is None:
+            self.db._upsert("wallet", "agent", ["agent", "coin", "joy", "owns_land"],
+                            (aid, START_COIN, 50.0, 0))
+            return {"coin": START_COIN, "joy": 50.0, "owns_land": 0}
+        return r
+
+    def coin(self, aid: str) -> float:
+        return self._wallet(aid)["coin"]
+
+    def joy(self, aid: str) -> float:
+        return self._wallet(aid)["joy"]
+
+    def owns_land(self, aid: str) -> bool:
+        return bool(self._wallet(aid)["owns_land"])
+
+    def _set_wallet(self, aid: str, coin=None, joy=None, owns_land=None):
+        w = self._wallet(aid)
+        self.db._upsert("wallet", "agent", ["agent", "coin", "joy", "owns_land"],
+                        (aid,
+                         w["coin"] if coin is None else max(0.0, coin),
+                         w["joy"] if joy is None else max(0.0, min(100.0, joy)),
+                         w["owns_land"] if owns_land is None else owns_land))
+
+    def earn(self, aid: str, amount: float):
+        self._set_wallet(aid, coin=self.coin(aid) + amount)
+
+    def add_joy(self, aid: str, delta: float):
+        self._set_wallet(aid, joy=self.joy(aid) + delta)
+
+    def joy_phrase(self, aid: str) -> str:
+        j = self.joy(aid)
+        if j >= 70:
+            return "your spirits are high; the day feels good"
+        if j <= 25:
+            return "a low, restless mood sits on you; you crave something that lifts it"
+        return "your mood is even"
+
+    def wealth_line(self, aid: str) -> str:
+        w = self._wallet(aid)
+        land = "you own your own plot of land" if w["owns_land"] else \
+            "you own no land of your own yet"
+        return f"you have {int(w['coin'])} coin; {land}"
+
+    def maybe_buy_land(self, aid: str, agents) -> str | None:
+        """No coin, no land. A resident with enough saved buys a plot, which
+        lets them build a home. A real, joyful milestone."""
+        w = self._wallet(aid)
+        if w["owns_land"] or w["coin"] < LAND_PRICE:
+            return None
+        self._set_wallet(aid, coin=w["coin"] - LAND_PRICE, owns_land=1,
+                         joy=w["joy"] + 25)
+        BUS.publish({"type": "toast",
+                     "text": f"🏡 {agents[aid].p['name']} bought a plot of land!"})
+        return ("bought a plot of land of their own at last, and felt a deep "
+                "settled joy in owning a piece of the earth")
+
+    # --- foraging: investigating wild foliage grows the town's flora ---- #
+    async def maybe_forage(self, agent, tick: int, rng) -> str | None:
+        """While at the perimeter gardens, a resident investigates wild plants.
+        Identifying a NEW one adds it to the town's plantable stock and pays a
+        small coin (useful knowledge) plus joy (discovery)."""
+        known = {r["name"] for r in self.db._all("SELECT DISTINCT name FROM flora")}
+        undiscovered = [f for f in WILD_FLORA if f not in known]
+        if not undiscovered or rng.random() > 0.5:
+            return None
+        found = rng.choice(undiscovered)
+        self.db._run("INSERT INTO flora(agent,name,tick) VALUES(?,?,?)",
+                     (agent.id, found, tick))
+        self.earn(agent.id, 3)
+        self.add_joy(agent.id, 12)
+        BUS.publish({"type": "toast",
+                     "text": f"🌿 {agent.p['name']} discovered wild {found} at "
+                             f"the town's edge!"})
+        return (f"foraged the town's edge and identified wild {found}, a plant "
+                f"nobody here had thought to grow; it can be cultivated now")
+
+    def town_flora(self) -> list[str]:
+        return [r["name"] for r in
+                self.db._all("SELECT DISTINCT name FROM flora")]
+
+    # --- animals roaming the perimeter --------------------------------- #
+    def _seed_animals(self):
+        if self.db._one("SELECT id FROM animals LIMIT 1"):
+            return
+        for i, (kind, dist) in enumerate(ANIMALS):
+            self.db._run("INSERT INTO animals(id,kind,district) VALUES(?,?,?)",
+                         (f"animal{i}", kind, dist))
+
+    def animals_at(self, district: str) -> list[str]:
+        return [r["kind"] for r in
+                self.db._all("SELECT kind FROM animals WHERE district=?", (district,))]
+
+    def wander_animals(self, rng, districts: list[str]):
+        """The ~10 beasts drift slowly between districts."""
+        for r in self.db._all("SELECT id, district FROM animals"):
+            if rng.random() < 0.15 and districts:
+                self.db._run("UPDATE animals SET district=? WHERE id=?",
+                             (rng.choice(districts), r["id"]))
+
+    def public_wallet(self, aid: str) -> dict:
+        w = self._wallet(aid)
+        return {"coin": int(w["coin"]), "joy": round(w["joy"], 1),
+                "owns_land": bool(w["owns_land"])}
 
     # --- the bounty: a one-off communal windfall the town must divide -- #
     def bounty(self) -> int:
@@ -226,6 +359,8 @@ class Survival:
     def build_home(self, aid: str, agents: dict) -> str | None:
         """Spend effort (and a meal if you have one) improving your own home.
         A better home is warmer at night — shelter you can feel."""
+        if not self.owns_land(aid):
+            return None                       # no land, no home: buy a plot first
         q = self.home_quality(aid)
         if q >= 10:
             return None
@@ -271,6 +406,8 @@ class Survival:
                          (agent.id, name, what, tick))
             self.db._run("INSERT INTO goods(agent,item) VALUES(?,?)",
                          (agent.id, name.lower()))
+            self.earn(agent.id, 6)                       # invention pays
+            self.add_joy(agent.id, 15)                   # and thrills the maker
             BUS.publish({"type": "toast",
                          "text": f"💡 {agent.p['name']} invented {name}!"})
             return f"invented {name}: {what}"
@@ -421,7 +558,10 @@ class Survival:
             if s["hunger"] >= EAT_AT and s["food"] > 0:
                 s["food"] -= 1
                 s["hunger"] = max(0.0, s["hunger"] - MEAL_RESTORES)
+                self.add_joy(aid, 4)                     # a meal lifts the spirit
                 events.append((aid, "ate a meal from their pouch"))
+            if tick % 3 == 0:
+                self.add_joy(aid, -0.8)                  # joy fades; they seek more
             elif not was_starving and s["hunger"] >= STARVING_AT:
                 events.append((aid, "is starving and needs to find food"))
                 BUS.publish({"type": "toast",
@@ -460,6 +600,8 @@ class Survival:
                 n = rng.randint(*YIELD_RANGE)
                 s["food"] += n
                 s["harvests"] += 1
+                self.earn(aid, 4)                        # a harvest earns coin
+                self.add_joy(aid, 8)                     # and real satisfaction
                 self.db.set_plot(aid, "empty", 0)
                 BUS.publish({"type": "toast",
                              "text": f"{a.p['name']} harvested {n} portions 🌾"})

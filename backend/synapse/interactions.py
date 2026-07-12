@@ -112,9 +112,13 @@ async def run_conversation(a: Agent, b: Agent, district, db: DB, tick: int,
 
     # The sensed moment, shared by both speakers.
     senses = SENSES.get(kind, "the town going about its day")
+    beasts = []
+    if ctx.get("survival") is not None:
+        beasts = ctx["survival"].animals_at(district.id)
+    animal_line = f" Some animals are about: {', '.join(beasts)}." if beasts else ""
     embodiment = (
         f"It is {ctx.get('time_of_day', 'daytime')}, {ctx.get('weather', 'clear')}. "
-        f"You are at {district.name}: {senses}. "
+        f"You are at {district.name}: {senses}.{animal_line} "
         f"{ctx.get('event', '')}".strip()
     )
 
@@ -184,6 +188,9 @@ async def run_conversation(a: Agent, b: Agent, district, db: DB, tick: int,
         # ordinary chemistry: every meeting nudges how they feel about each other
         surv.shift_affinity(a.id, b.id, rng.uniform(-0.6, 0.8))
         surv.shift_affinity(b.id, a.id, rng.uniform(-0.6, 0.8))
+        # company is a joy: good conversation lifts the spirits (dopamine)
+        surv.add_joy(a.id, 3)
+        surv.add_joy(b.id, 3)
 
     # The magistrate scores debates, lessons, and build-talk -> preference signal.
     if judge is not None:
@@ -192,6 +199,9 @@ async def run_conversation(a: Agent, b: Agent, district, db: DB, tick: int,
             w, l = outcome
             surv.shift_affinity(l, w, -2.0)    # losing stings; rivalry is real
             surv.shift_affinity(w, l, 1.0)     # respect for a worthy opponent
+            surv.earn(w, 5)                    # winning at court pays a purse
+            surv.add_joy(w, 12)                # and feels wonderful
+            surv.add_joy(l, -6)                # losing stings the mood too
 
     BUS.publish({"type": "interaction_end", "id": iid})
     return iid

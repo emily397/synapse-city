@@ -35,6 +35,7 @@ class Simulation:
         from .library import Library
         self.library = Library(self.db)
         self.proving.library = self.library
+        self.proving.survival = self.survival
         for a in self.agents.values():
             a.survival = self.survival
         self.rng = random.Random(CONFIG.seed)
@@ -161,6 +162,7 @@ class Simulation:
         if self._is_night(h):
             await self._night_step()
         else:
+            self.survival.wander_animals(self.rng, list(self.world.districts))
             self._move_and_meet()
             self._world_step()
 
@@ -227,9 +229,32 @@ class Simulation:
                     self._convos.add(t)
                     t.add_done_callback(self._convos.discard)
                     continue
-                # Builders: work on your own home when standing in it, or shore
+                # Coin buys land, land lets you build a home: a resident who has
+                # saved enough may buy their own plot (a joyful milestone).
+                if (not self.survival.owns_land(a.id)
+                        and self.survival.coin(a.id) >= 25
+                        and self.rng.random() < 0.3):
+                    ev = self.survival.maybe_buy_land(a.id, self.agents)
+                    if ev:
+                        t = asyncio.create_task(
+                            a.mem.observe(ev, self.tick, kind="survival"))
+                        self._convos.add(t); t.add_done_callback(self._convos.discard)
+                        continue
+                # Foraging the perimeter gardens: investigating wild foliage can
+                # discover new plantable flora for the whole town.
+                if (self.world.districts[a.district].kind == "farming"
+                        and self.rng.random() < 0.15):
+                    async def _forage(ag=a):
+                        ev = await self.survival.maybe_forage(ag, self.tick, self.rng)
+                        if ev:
+                            await ag.mem.observe(ev, self.tick, kind="survival")
+                    t = asyncio.create_task(_forage())
+                    self._convos.add(t); t.add_done_callback(self._convos.discard)
+                    continue
+                # Builders: work on your own home (only on land you own) or shore
                 # up the district you're in (real XP -> visible level-ups).
                 if (a.district == a.p["home"]
+                        and self.survival.owns_land(a.id)
                         and self.survival.hunger(a.id) < 60
                         and self.rng.random() < 0.12):
                     ev = self.survival.build_home(a.id, self.agents)

@@ -63,7 +63,11 @@ class Agent:
         mem = ("\nYou remember:\n- " + "\n- ".join(memories) if memories else "")
         body = ""
         if self.survival is not None:
-            body = f" Your body right now: {self.survival.status_line(self.id)}."
+            s = self.survival
+            body = (f" Your body right now: {s.status_line(self.id)}. "
+                    f"{s.joy_phrase(self.id)}; {s.wealth_line(self.id)}. "
+                    f"Like anyone, you seek out what lifts your spirits: good "
+                    f"company, a win, a discovery, a fair coin earned.")
         back = p.get("backstory", "")
         back = f" {back}" if back else ""
         return (
@@ -86,4 +90,5 @@ class Agent:
         }
         if self.survival is not None:
             d["survival"] = self.survival.public(self.id)
+            d["wallet"] = self.survival.public_wallet(self.id)
         return d

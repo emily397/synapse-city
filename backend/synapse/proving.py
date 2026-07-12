@@ -47,6 +47,7 @@ class ProvingGrounds:
                 " tick INTEGER, pass INTEGER, prompt TEXT, response TEXT)")
         self.busy: set[str] = set()
         self.library = None                # set by the simulation
+        self.survival = None               # set by the simulation
 
     def _pick_family(self, aid: str, rng: random.Random) -> str:
         stats = {f: (0, 0) for f in FAMILIES}
@@ -89,6 +90,9 @@ class ProvingGrounds:
                     self.library.record_skill_win(aid, fam)
                 if ok:
                     await self.library.maybe_author_skill(agent, fam, tick)
+            if self.survival is not None and ok:
+                self.survival.earn(aid, 2)          # solved work pays
+                self.survival.add_joy(aid, 6)       # and satisfies
             self.db._run(
                 "INSERT INTO attempts(agent,family,seed,tick,pass,prompt,response)"
                 " VALUES(?,?,?,?,?,?,?)",
