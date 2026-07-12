@@ -109,6 +109,7 @@ class Survival:
         self.world = world
         self.event: dict | None = None       # active weather event
         self.event_until = 0
+        self.drought_until = 0                # sustained disaster: crops keep dying
         db.ensure_survival_tables()
         db._run("CREATE TABLE IF NOT EXISTS goods ("
                 " id INTEGER PRIMARY KEY AUTOINCREMENT, agent TEXT, item TEXT)"
@@ -300,6 +301,52 @@ class Survival:
         return ("a miraculous abundance of food appeared in the square this "
                 "morning, a windfall the elders are calling a gift from the "
                 "harvest-god")
+
+    def drought_active(self, tick: int) -> bool:
+        return tick < self.drought_until
+
+    def start_drought(self, tick: int, duration: int, agents) -> str:
+        """A sustained drought: kill most standing crops NOW, and for the
+        duration nearly everything planted withers before it ripens. Temporary,
+        but long and cruel. Returns the town-felt event text."""
+        self.drought_until = tick + duration
+        killed = 0
+        for aid in list(self.state):
+            plot = self.db.get_plot(aid)
+            if plot and plot["state"] == "growing":
+                # ~85% of standing crops die immediately
+                import random as _r
+                if _r.Random(tick + hash(aid)).random() < 0.85:
+                    self.db.set_plot(aid, "empty", 0)
+                    self.state[aid]["withers"] += 1
+                    killed += 1
+        BUS.publish({"type": "toast",
+                     "text": "☀️🥀 A DROUGHT has come. The rows are cracking, the "
+                             "wells are low, and the crops are dying in the fields."})
+        return ("a hard drought has fallen on the town; the fields are cracking "
+                "and most of the standing crops have died, with no rain in sight")
+
+    def _drought_toll(self, agents, tick: int, rng) -> list[tuple[str, str]]:
+        out: list[tuple[str, str]] = []
+        if not self.drought_active(tick):
+            if self.drought_until and tick >= self.drought_until:
+                self.drought_until = 0
+                BUS.publish({"type": "toast",
+                             "text": "🌧️ The drought has broken at last; rain on the "
+                                     "rows, and the town breathes again."})
+                for aid in self.state:
+                    out.append((aid, "watched the drought finally break, rain "
+                                     "returning to the parched fields"))
+            return out
+        # during the drought, planted crops keep failing
+        for aid in list(self.state):
+            plot = self.db.get_plot(aid)
+            if plot and plot["state"] == "growing" and rng.random() < 0.4:
+                self.db.set_plot(aid, "empty", 0)
+                self.state[aid]["withers"] += 1
+                out.append((aid, "lost another planting to the drought; nothing "
+                                 "will take root in this dry earth"))
+        return out
 
     def _consume_bounty(self, agents, rng) -> list[tuple[str, str]]:
         out: list[tuple[str, str]] = []
@@ -521,7 +568,9 @@ class Survival:
         """One survival step for the whole town. Returns list of (agent, event
         text) so the sim can turn them into memories/speech."""
         events: list[tuple[str, str]] = []
+        self._now_tick = tick
         events.extend(self._maybe_weather_event(agents, tick, rng))
+        events.extend(self._drought_toll(agents, tick, rng))
         events.extend(self._consume_bounty(agents, rng))
         for aid, a in agents.items():
             s = self.state.setdefault(aid, {"agent": aid, "hunger": START_HUNGER,

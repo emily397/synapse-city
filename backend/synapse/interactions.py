@@ -62,6 +62,14 @@ def world_topics(world, survival, db: DB, day: int, rng: random.Random) -> list[
             out.append("who in town is going hungry and what neighbours owe them")
         if low_food >= 3:
             out.append("whether the gardens can feed the town this season")
+    # a drought is on everyone's mind
+    try:
+        if survival is not None and survival.drought_active(
+                getattr(survival, "_now_tick", 0)):
+            out.append("how the town should survive the drought, whether to ration "
+                       "the food stores, and who should go without")
+    except Exception:
+        pass
     # the harvest-god's windfall: how should the town divide it?
     try:
         if survival is not None and survival.bounty() > 0:

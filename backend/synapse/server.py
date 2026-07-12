@@ -157,6 +157,17 @@ async def bounty(amount: int = 45):
     return {"granted": amount, "bounty_now": SIM.survival.bounty()}
 
 
+@app.post("/api/drought")
+async def drought(ticks: int = 120):
+    """Natural disaster: a sustained drought that kills most standing crops now
+    and keeps new plantings from taking root for its duration. Temporary — it
+    breaks on its own. Watch how they ration, trade, and fight to survive it."""
+    ev = SIM.survival.start_drought(SIM.tick, ticks, SIM.agents)
+    for a in SIM.agents.values():
+        await a.mem.observe(ev, SIM.tick, kind="survival")
+    return {"drought_ticks": ticks, "breaks_at_tick": SIM.survival.drought_until}
+
+
 @app.websocket("/ws")
 async def ws(sock: WebSocket):
     await sock.accept()
