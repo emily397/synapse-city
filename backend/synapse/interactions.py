@@ -62,6 +62,14 @@ def world_topics(world, survival, db: DB, day: int, rng: random.Random) -> list[
             out.append("who in town is going hungry and what neighbours owe them")
         if low_food >= 3:
             out.append("whether the gardens can feed the town this season")
+    # the strange light in the sky: nobody can stop talking about it
+    try:
+        if survival is not None and getattr(survival, "omen_until", 0) > \
+                getattr(survival, "_now_tick", 0):
+            out.append("the strange light that crossed the sky, what it truly was, "
+                       "and whether it was a warning, a blessing, or nothing at all")
+    except Exception:
+        pass
     # a drought is on everyone's mind
     try:
         if survival is not None and survival.drought_active(

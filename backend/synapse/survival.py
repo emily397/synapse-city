@@ -136,6 +136,8 @@ class Survival:
         r = db._one("SELECT v FROM townstore WHERE k='drought_until'")
         if r:
             self.drought_until = int(r["v"])   # survive restarts / train cycles
+        r = db._one("SELECT v FROM townstore WHERE k='omen_until'")
+        self.omen_until = int(r["v"]) if r else 0   # sky-omen is fresh talk for a while
         db._run("CREATE TABLE IF NOT EXISTS inventions ("
                 " id INTEGER PRIMARY KEY AUTOINCREMENT, agent TEXT, name TEXT,"
                 " what TEXT, tick INTEGER)" if not db.pg else
@@ -305,6 +307,31 @@ class Survival:
         return ("a miraculous abundance of food appeared in the square this "
                 "morning, a windfall the elders are calling a gift from the "
                 "harvest-god")
+
+    def sky_omen(self, rng) -> str:
+        """A strange light crosses the sky and vanishes. The townsfolk have no
+        word for such a thing; they witness it, unsettled, and will argue for
+        days about what it was and what it portends. One-off."""
+        forms = [
+            "a light too swift and too bright for any star streaked across the "
+            "sky, hung a moment over the hills, then vanished clean away",
+            "a silver shape slid silently through the clouds, wrong somehow, "
+            "faster than any bird, and was gone before anyone could point",
+            "a burning point of light hovered over the fields, pulsed once, and "
+            "shot upward until it was nothing",
+        ]
+        seen = rng.choice(forms)
+        self.omen_until = self._now_tick + 80          # the talk lingers for days
+        self.db._upsert("townstore", "k", ["k", "v"], ("omen_until", self.omen_until))
+        BUS.publish({"type": "toast",
+                     "text": "🛸✨ Something crossed the sky over the town, a "
+                             "strange swift light, and then it was gone. Every soul "
+                             "who saw it is talking of an omen."})
+        # a jolt of unsettled wonder for everyone
+        for aid in self.state:
+            self.add_joy(aid, rng.choice([-4, 6, 10]))   # awe, dread, or thrill
+        return ("saw a strange light cross the sky, " + seen + "; nobody has "
+                "any idea what it was, and it has shaken the whole town")
 
     def drought_active(self, tick: int) -> bool:
         return tick < self.drought_until

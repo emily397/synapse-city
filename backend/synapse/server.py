@@ -166,6 +166,15 @@ async def _broadcast_memory(text: str):
             pass
 
 
+@app.post("/api/omen")
+async def omen():
+    """A strange light crosses the sky and vanishes. Every resident witnesses
+    it and will debate its meaning for days. One-off."""
+    ev = SIM.survival.sky_omen(SIM.rng)
+    asyncio.create_task(_broadcast_memory(ev))
+    return {"omen": "seen", "talk_until_tick": SIM.survival.omen_until}
+
+
 @app.post("/api/drought")
 async def drought(ticks: int = 120):
     """Natural disaster: a sustained drought that kills most standing crops now
