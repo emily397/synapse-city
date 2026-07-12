@@ -486,9 +486,16 @@ class Simulation:
                     t.add_done_callback(self._convos.discard)
             elif a.district == home:
                 a.status = "sleeping"
-                insight = await a.mem.reflect(a.p, self.tick)
-                if insight:
-                    BUS.publish({"type": "reflect", "agent": a.public(), "insight": insight})
+                # reflect in the BACKGROUND: an LLM call here would block the
+                # whole tick loop (crawling nights, esp. with the 32B elder)
+                async def _reflect_bg(ag=a):
+                    insight = await ag.mem.reflect(ag.p, self.tick)
+                    if insight:
+                        BUS.publish({"type": "reflect", "agent": ag.public(),
+                                     "insight": insight})
+                rt = asyncio.create_task(_reflect_bg())
+                self._convos.add(rt)
+                rt.add_done_callback(self._convos.discard)
 
     async def _new_day(self):
         # wake everyone
@@ -496,10 +503,9 @@ class Simulation:
             if a.status == "sleeping":
                 a.status = "idle"
                 a.cooldown = 0
-        try:
-            await self.library.nightly_distill(self.db, self.day)
-        except Exception:
-            pass
+        dt = asyncio.create_task(self.library.nightly_distill(self.db, self.day))
+        self._convos.add(dt)
+        dt.add_done_callback(self._convos.discard)
         await self._harvest()
 
     async def _harvest(self):
