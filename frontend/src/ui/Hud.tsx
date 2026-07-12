@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useStore } from "../store";
 
 function Clock() {
@@ -223,8 +224,11 @@ export function Hud() {
   const presenter = useStore((s) => s.presenter);
   const togglePresenter = useStore((s) => s.togglePresenter);
   const backend = st?.backend ?? "connecting";
+  // Mobile: the three-column HUD becomes one tabbed sheet ("world" = no panel,
+  // just the 3D town). Tabs are display:none on desktop; data-tab drives CSS.
+  const [tab, setTab] = useState<"world" | "feed" | "town" | "loop">("feed");
   return (
-    <div className="hud">
+    <div className="hud" data-tab={tab}>
       <header>
         <div className="brand">
           <h1>SYNAPSE&nbsp;CITY</h1>
@@ -238,6 +242,15 @@ export function Hud() {
           <Clock />
         </div>
       </header>
+
+      <nav className="mtabs">
+        {([["world", "🏙 world"], ["feed", "💬 feed"], ["town", "👥 residents"],
+           ["loop", "📈 loop"]] as const).map(([k, label]) => (
+          <button key={k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>
+            {label}
+          </button>
+        ))}
+      </nav>
 
       <div className="left"><Feed /><Residents /></div>
       <div className="right"><Loop /><Elo /></div>

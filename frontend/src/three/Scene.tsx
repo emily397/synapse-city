@@ -3,6 +3,7 @@ import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import { EffectComposer, Bloom, Vignette } from "@react-three/postprocessing";
 import { useStore } from "../store";
+import { MOBILE_AT_LOAD } from "../ui/useMobile";
 import { City } from "./City";
 import { Agents } from "./Agents";
 import * as THREE from "three";
@@ -30,7 +31,9 @@ function CameraDirector({ presenter, controls }: { presenter: boolean; controls:
 
 // Postprocessing (bloom/vignette) can fail on some headless/older GL stacks.
 // Toggle off with ?flat in the URL if you ever see a blank canvas.
-const POST = !new URLSearchParams(location.search).has("flat");
+// Phones skip it (and shadows, and high dpr) entirely: a 48-district town with
+// bloom melts mobile GPUs. Decided once at load; shadows can't change later.
+const POST = !new URLSearchParams(location.search).has("flat") && !MOBILE_AT_LOAD;
 
 // Sky/ambience interpolated by time of day.
 function palette(hour: number, night: boolean) {
@@ -48,14 +51,15 @@ export function Scene() {
   const p = palette(clock?.hour ?? 12, clock?.night ?? false);
 
   return (
-    <Canvas shadows camera={{ position: [0, 48, 62], fov: 42 }}
-            gl={{ antialias: true }} dpr={[1, 2]} resize={{ debounce: 0 }}
+    <Canvas shadows={!MOBILE_AT_LOAD} camera={{ position: [0, 48, 62], fov: 42 }}
+            gl={{ antialias: !MOBILE_AT_LOAD }} dpr={MOBILE_AT_LOAD ? [1, 1.5] : [1, 2]}
+            resize={{ debounce: 0 }}
             style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}>
       <color attach="background" args={[p.bg]} />
       <fog attach="fog" args={[p.fog, 70, 190]} />
       <hemisphereLight intensity={p.amb} groundColor={"#20304a"} />
       <directionalLight
-        position={[40, 70, 20]} intensity={p.sun} castShadow
+        position={[40, 70, 20]} intensity={p.sun} castShadow={!MOBILE_AT_LOAD}
         shadow-mapSize={[2048, 2048]}
         shadow-camera-left={-70} shadow-camera-right={70}
         shadow-camera-top={70} shadow-camera-bottom={-70} />

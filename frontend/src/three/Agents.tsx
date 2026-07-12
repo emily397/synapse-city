@@ -3,6 +3,7 @@ import { useFrame } from "@react-three/fiber";
 import { Html } from "@react-three/drei";
 import * as THREE from "three";
 import { useStore } from "../store";
+import { useMobile } from "../ui/useMobile";
 import type { Agent } from "../types";
 
 function seedNum(s: string) {
@@ -69,7 +70,7 @@ function Hat({ kind, color }: { kind: string; color: string }) {
   }
 }
 
-function Avatar({ id }: { id: string }) {
+function Avatar({ id, mobile }: { id: string; mobile: boolean }) {
   const agent = useStore((s) => s.agents[id]) as Agent | undefined;
   const bubble = useStore((s) => s.bubbles[id]);
   const ref = useRef<THREE.Group>(null);
@@ -91,7 +92,9 @@ function Avatar({ id }: { id: string }) {
 
   if (!agent) return null;
   const talking = agent.status === "interacting";
-  const showBubble = bubble && bubble.until > Date.now();
+  // On phones the bubbles blanket the scene and fight the feed; the feed
+  // carries every line anyway, so small screens go bubble-free.
+  const showBubble = !mobile && bubble && bubble.until > Date.now();
   const av = agent.avatar || {};
 
   return (
@@ -130,5 +133,6 @@ function Avatar({ id }: { id: string }) {
 
 export function Agents() {
   const ids = useStore((s) => Object.keys(s.agents));
-  return <>{ids.map((id) => <Avatar key={id} id={id} />)}</>;
+  const mobile = useMobile();
+  return <>{ids.map((id) => <Avatar key={id} id={id} mobile={mobile} />)}</>;
 }
