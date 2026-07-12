@@ -34,18 +34,22 @@ def load_jsonl(path) -> list[dict]:
 
 
 def with_replay(gen: int, suffix: str) -> list[dict]:
-    """Anti-collapse anchor (SPIN pattern): current generation's data plus a
-    replay sample of every prior generation, so the policy never drifts off the
-    distribution that produced it. Honors SYNAPSE_RESIDENT for personal runs."""
+    """Load the FULL accumulated corpus for this stream (all generations,
+    deduplicated), honoring SYNAPSE_RESIDENT for personal runs.
+
+    The harvest fragments data across many small gen*_ files; training on a
+    single gen's sliver starves the run (it would finish in seconds on a few
+    rows). Concatenating every generation and de-duping gives the resident its
+    entire lived corpus, which is also the correct anti-collapse anchor: all
+    prior data is always present, so the policy cannot drift off-distribution.
+    The `gen` argument is kept for the filename/version, not to slice data."""
     suffix = _suffixed(suffix)
-    cur = load_jsonl(DATASETS / f"gen{gen}_{suffix}.jsonl")
-    prior = []
+    rows: list[dict] = []
+    seen: set[str] = set()
     for p in sorted(glob.glob(str(DATASETS / f"gen*_{suffix}.jsonl"))):
-        g = int(Path(p).stem.split("_")[0][3:])
-        if g < gen:
-            prior += load_jsonl(p)
-    if prior:
-        keep = max(1, int(len(cur) * REPLAY_FRACTION))
-        # deterministic slice; shuffle upstream if you want variety
-        cur = cur + prior[:keep]
-    return cur
+        for r in load_jsonl(p):
+            key = json.dumps(r, sort_keys=True, ensure_ascii=False)
+            if key not in seen:
+                seen.add(key)
+                rows.append(r)
+    return rows
