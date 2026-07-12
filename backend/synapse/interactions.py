@@ -199,6 +199,18 @@ async def run_conversation(a: Agent, b: Agent, district, db: DB, tick: int,
         await speaker.mem.observe(f"I said: {text}", tick, kind="dialogue")
         await listener.mem.observe(f"{speaker.p['name']} said: {text}", tick, kind="dialogue")
 
+    # Novelty + punch shape the dopamine: a fresh, punchy exchange thrills;
+    # rehashing the same subject at length bores and grinds the mood down.
+    responses = [t for _, t in transcript if t]
+    punch = (sum(1 for r in responses
+                 if len(r) < 140 or r.rstrip().endswith(("?", "!")))
+             / max(1, len(responses)))
+    rep = a.recent_topics.count(topic) + b.recent_topics.count(topic)
+    novelty = 1.25 if rep == 0 else (0.6 if rep <= 2 else 0.2)
+    for x in (a, b):
+        x.recent_topics.append(topic)
+        del x.recent_topics[:-6]
+
     # A fed neighbour may share food with a starving one — met face to face —
     # and surplus food can buy a possession off a hungry neighbour (barter).
     surv = ctx.get("survival")
@@ -221,10 +233,13 @@ async def run_conversation(a: Agent, b: Agent, district, db: DB, tick: int,
         surv.shift_affinity(a.id, b.id, rng.uniform(-0.6, 0.8))
         surv.shift_affinity(b.id, a.id, rng.uniform(-0.6, 0.8))
         # company is a joy: real conversation is the town's biggest dopamine
-        # source, and it hits harder with someone you actually like.
+        # source, hitting harder with someone you like, when it's PUNCHY and
+        # about something FRESH. Same-topic waffle barely registers and bores.
         for me, you in ((a, b), (b, a)):
-            lift = 8.0 + max(0.0, surv.affinity(me.id, you.id))   # friends feel better
-            surv.add_joy(me.id, lift)
+            base = 8.0 + max(0.0, surv.affinity(me.id, you.id))
+            surv.add_joy(me.id, base * (0.4 + punch) * novelty)
+            if novelty < 0.5:                       # rehashing grinds them down
+                me.bored = getattr(me, "bored", 0) + 3
 
     # The magistrate scores debates, lessons, and build-talk -> preference signal.
     if judge is not None:

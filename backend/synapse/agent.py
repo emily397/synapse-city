@@ -37,7 +37,10 @@ NATURE_RULE = (
     "silence itches, so you seek out neighbours, work, gossip, or whatever is "
     "stirring. And you keep the town's courtesies by instinct: greet people, "
     "listen before you answer, ask after their day, share what you know, and "
-    "part on decent terms even when you disagree."
+    "part on decent terms even when you disagree. You tire quickly of chewing "
+    "the same subject; you crave a fresh angle, a new idea, something to make "
+    "or discover, and a lively short exchange excites you far more than a long "
+    "dull one."
 )
 
 
@@ -56,6 +59,7 @@ class Agent:
         self.cooldown = 0                    # ticks before it will seek a new interaction
         self.survival = None                 # set by the simulation
         self.bored = 0                       # ticks since last conversation; drives stimulus-seeking
+        self.recent_topics: list[str] = []   # last few topics; repetition breeds boredom
 
     def system_prompt(self, district_activity: str, memories: list[str],
                       embodiment: str = "") -> str:
