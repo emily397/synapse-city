@@ -148,13 +148,20 @@ def _suite_gate(gen: int, challenger_gen, incumbent: str, suite: str,
     from evalsuite.verify import verify
 
     tasks = load_suite(Path(__file__).resolve().parent / "evalsuite" / suite)
+    # nightly gate uses a fast deterministic subset (still statistically valid
+    # via the sign test); the full 160-task suite is the weekly deep eval.
+    import os as _os
+    gate_n = int(_os.getenv("SYNAPSE_GATE_TASKS", "64"))
+    if gate_n and gate_n < len(tasks):
+        step = max(1, len(tasks) // gate_n)
+        tasks = tasks[::step][:gate_n]
 
     # --- PHASE 1: challenger answers (its weights are in VRAM now) ---------
     ch_ok_list = []
     for i, t in enumerate(tasks, 1):
         try:
             out = challenger_gen(t["prompt"], sys_prompt=SYSTEM,
-                                 max_new=700, temp=0.0)
+                                 max_new=512, temp=0.0)
             ok, _ = verify(t, out)
         except Exception:                            # noqa: BLE001
             ok = False
