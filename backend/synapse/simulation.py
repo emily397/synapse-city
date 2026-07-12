@@ -8,12 +8,15 @@ from __future__ import annotations
 import asyncio
 import os
 import random
+import time as _time
 from pathlib import Path
 
 # While this file exists, a training cycle owns the GPU and the sim rests
 # (backend stays up, no model calls). ops/gpu_handover.ps1 creates/removes it.
 _TRAINING_LOCK = Path(os.getenv("SYNAPSE_TRAINING_LOCK",
                                 r"C:\Users\nirvana\.synapse\TRAINING.lock"))
+# Updated every tick; the supervisor restarts the backend if it goes stale.
+_SIM_HEARTBEAT = Path(__file__).resolve().parent.parent / "run" / "sim.heartbeat"
 
 from . import harvest, worldgen
 from .agent import Agent
@@ -133,24 +136,29 @@ class Simulation:
         self.running = True
         BUS.publish(self.snapshot())
         while self.running:
-            if _TRAINING_LOCK.exists():
-                # A training cycle holds the GPU: the town RESTS instead of
-                # going dark. The backend stays up and connected, the clock
-                # ticks, avatars drift home — no LLM/embedding calls (the GPU
-                # is busy learning). The town wakes and talks again when the
-                # cycle finishes and the lock is released.
-                await self._rest_tick()
-                await asyncio.sleep(CONFIG.tick_seconds)
-                continue
-            await self.step()
-            BUS.publish({"type": "clock", **self._clock()})
-            if self.tick % CONFIG.harvest_interval == 0:
-                await self._harvest()                    # live ELO + rolling datasets
-            if self.tick % 5 == 0:
-                BUS.publish({"type": "stats", **self._stats()})
-                for k, v in (("tick", self.tick), ("minutes", self.minutes),
-                             ("day", self.day), ("generation", self.generation)):
-                    self.db._upsert("simstate", "k", ["k", "v"], (k, v))
+            try:
+                if _TRAINING_LOCK.exists():
+                    # A training cycle holds the GPU: the town RESTS instead of
+                    # going dark. Backend stays up and connected, clock ticks,
+                    # avatars drift home — no LLM/embedding calls. Wakes when the
+                    # cycle finishes and the lock is released.
+                    await self._rest_tick()
+                else:
+                    await self.step()
+                    BUS.publish({"type": "clock", **self._clock()})
+                    if self.tick % CONFIG.harvest_interval == 0:
+                        await self._harvest()            # live ELO + rolling datasets
+                    if self.tick % 5 == 0:
+                        BUS.publish({"type": "stats", **self._stats()})
+                        for k, v in (("tick", self.tick), ("minutes", self.minutes),
+                                     ("day", self.day), ("generation", self.generation)):
+                            self.db._upsert("simstate", "k", ["k", "v"], (k, v))
+                # liveness heartbeat: the supervisor restarts the backend if this
+                # goes stale, so a silent sim death can never freeze the town again
+                _SIM_HEARTBEAT.write_text(str(int(_time.time())), encoding="utf-8")
+            except Exception:                            # one bad tick must never
+                import traceback                          # kill the whole town
+                traceback.print_exc()
             await asyncio.sleep(CONFIG.tick_seconds)
 
     async def _rest_tick(self):
