@@ -7,7 +7,7 @@
       "emoji": "\u2696\ufe0f",
       "color": "#f2c94c",
       "home": "arena",
-      "model": "qwen2.5:32b",
+      "model": "qwen2.5:14b",
       "avatar": {
         "body": "capsule",
         "hat": "crown"
