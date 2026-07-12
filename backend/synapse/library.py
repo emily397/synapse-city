@@ -121,6 +121,28 @@ class Library:
         except Exception:
             pass
 
+    async def author_pending(self, agents: dict, tick: int) -> int:
+        """Reliable sweep: author playbooks for every (resident, family) pair
+        with 3+ verified solves and no skill yet. Called on each harvest beat,
+        so authoring can never be lost to a swallowed per-attempt exception."""
+        n = 0
+        rows = self.db._all(
+            "SELECT a.agent AS agent, a.family AS family, COUNT(*) AS c "
+            "FROM attempts a WHERE a.pass=1 AND a.family NOT LIKE 'mentor:%' "
+            "GROUP BY a.agent, a.family HAVING c >= 3")
+        for r in rows:
+            ag = agents.get(r["agent"])
+            if ag is None:
+                continue
+            if self.db._one("SELECT id FROM skills WHERE agent=? AND family=?",
+                            (r["agent"], r["family"])):
+                continue
+            await self.maybe_author_skill(ag, r["family"], tick)
+            n += 1
+            if n >= 2:          # at most 2 per beat: keep the GPU for living
+                break
+        return n
+
     def skill_for(self, agent_id: str, family: str) -> str | None:
         r = self.db._one("SELECT id, playbook FROM skills WHERE agent=? AND "
                          "family=? AND archived=0", (agent_id, family))

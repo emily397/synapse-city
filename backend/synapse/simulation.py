@@ -424,6 +424,10 @@ class Simulation:
         await self._harvest()
 
     async def _harvest(self):
+        try:
+            await self.library.author_pending(self.agents, self.tick)
+        except Exception:
+            pass
         gen = await harvest.harvest_cycle(self.db, self.generation, self.agents)
         if gen is not None:
             self.generation = gen.get("generation", self.generation)
