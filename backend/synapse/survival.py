@@ -104,6 +104,7 @@ class Survival:
                 " agent TEXT PRIMARY KEY, hp REAL DEFAULT 100)")
         db._run("CREATE TABLE IF NOT EXISTS homes ("
                 " agent TEXT PRIMARY KEY, quality REAL DEFAULT 0)")
+        db._run("CREATE TABLE IF NOT EXISTS townstore (k TEXT PRIMARY KEY, v REAL)")
         db._run("CREATE TABLE IF NOT EXISTS inventions ("
                 " id INTEGER PRIMARY KEY AUTOINCREMENT, agent TEXT, name TEXT,"
                 " what TEXT, tick INTEGER)" if not db.pg else
@@ -139,6 +140,65 @@ class Survival:
 
     def is_starving(self, aid: str) -> bool:
         return self.hunger(aid) >= STARVING_AT
+
+    # --- the bounty: a one-off communal windfall the town must divide -- #
+    def bounty(self) -> int:
+        r = self.db._one("SELECT v FROM townstore WHERE k='bounty'")
+        return int(r["v"]) if r else 0
+
+    def _set_bounty(self, n: int):
+        self.db._upsert("townstore", "k", ["k", "v"], ("bounty", max(0, n)))
+
+    def _generous(self, agent) -> bool:
+        t = (" ".join(agent.p.get("traits", [])) + " " + agent.p.get("role", "")).lower()
+        kind = any(w in t for w in ("warm", "fair", "kind", "peace", "gentle",
+                                    "generous", "healer", "magistrate", "innkeeper",
+                                    "patient"))
+        return kind or self.hunger(agent.id) < 20
+
+    def grant_bounty(self, n: int) -> str:
+        """A sudden extraordinary abundance appears in the square. One-off:
+        it depletes as residents partake and does not renew."""
+        self._set_bounty(self.bounty() + n)
+        BUS.publish({"type": "toast",
+                     "text": "🌾✨ A miraculous abundance of food has appeared in "
+                             "the town square, more than anyone has seen, folk are "
+                             "calling it a gift from the harvest-god."})
+        return ("a miraculous abundance of food appeared in the square this "
+                "morning, a windfall the elders are calling a gift from the "
+                "harvest-god")
+
+    def _consume_bounty(self, agents, rng) -> list[tuple[str, str]]:
+        out: list[tuple[str, str]] = []
+        b = self.bounty()
+        if b <= 0:
+            return out
+        for aid, a in agents.items():
+            if b <= 0:
+                break
+            s = self.state.get(aid)
+            if not s:
+                continue
+            gen = self._generous(a)
+            take = 0
+            if s["hunger"] >= 30:                       # hungry: eat now
+                take = 1 if gen else rng.randint(2, 3)  # the generous take a share
+            elif not gen and rng.random() < 0.4:        # not hungry, but grab while here
+                take = rng.randint(1, 2)
+            take = min(take, b)
+            if take:
+                s["food"] += take
+                b -= take
+                self.db.set_survival(**s)
+                out.append((aid, f"took {take} portion{'s' if take != 1 else ''} "
+                                 f"from the miraculous bounty in the square"))
+        self._set_bounty(b)
+        if b <= 0:
+            BUS.publish({"type": "toast",
+                         "text": "The miraculous bounty is gone, the square is bare "
+                                 "again, but bellies are full and the talk is all of "
+                                 "providence."})
+        return out
 
     # --- health (mortality: the body keeps the score) ------------------ #
     def hp(self, aid: str) -> float:
@@ -325,6 +385,7 @@ class Survival:
         text) so the sim can turn them into memories/speech."""
         events: list[tuple[str, str]] = []
         events.extend(self._maybe_weather_event(agents, tick, rng))
+        events.extend(self._consume_bounty(agents, rng))
         for aid, a in agents.items():
             s = self.state.setdefault(aid, {"agent": aid, "hunger": START_HUNGER,
                                             "food": START_FOOD, "harvests": 0,

@@ -146,6 +146,17 @@ async def add_agent(body: NewResident):
     return public
 
 
+@app.post("/api/bounty")
+async def bounty(amount: int = 45):
+    """Divine intervention: a one-off communal food windfall appears in the
+    square. Watch how the residents decide to divide and consume it; it does
+    not renew."""
+    ev = SIM.survival.grant_bounty(amount)
+    for a in SIM.agents.values():
+        await a.mem.observe(ev, SIM.tick, kind="survival")
+    return {"granted": amount, "bounty_now": SIM.survival.bounty()}
+
+
 @app.websocket("/ws")
 async def ws(sock: WebSocket):
     await sock.accept()

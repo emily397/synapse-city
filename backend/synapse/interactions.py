@@ -62,6 +62,13 @@ def world_topics(world, survival, db: DB, day: int, rng: random.Random) -> list[
             out.append("who in town is going hungry and what neighbours owe them")
         if low_food >= 3:
             out.append("whether the gardens can feed the town this season")
+    # the harvest-god's windfall: how should the town divide it?
+    try:
+        if survival is not None and survival.bounty() > 0:
+            out.append("how the sudden windfall of food from the harvest-god should "
+                       "be shared, and whether to feast now or store it against winter")
+    except Exception:
+        pass
     # a fresh invention is the talk of the town
     try:
         inv = db._one("SELECT agent, name, what FROM inventions ORDER BY id DESC LIMIT 1")
