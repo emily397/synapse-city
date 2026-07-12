@@ -140,6 +140,25 @@ async def harvest_cycle(db: DB, current_gen: int, agents: dict) -> dict | None:
             dpo_by_res.setdefault(p["agent"], []).append(row)
     except Exception:
         pass
+
+    # Outcome-selected diary distillation: lived lessons of residents who are
+    # THRIVING (top half by health) become SFT — experience reaches weights,
+    # filtered by Darwinian outcome, never by opinion.
+    try:
+        hp = {r["agent"]: r["hp"] for r in db._all("SELECT agent, hp FROM health")}
+        if hp:
+            med = sorted(hp.values())[len(hp) // 2]
+            for r in db._all("SELECT agent, text FROM memories WHERE kind='reflection'"):
+                if hp.get(r["agent"], 0) >= med and r["text"] \
+                        and not breaks_fiction(r["text"]):
+                    row = {"messages": [
+                        {"role": "user",
+                         "content": "What has your life taught you lately?"},
+                        {"role": "assistant", "content": r["text"]}]}
+                    sft.append(row)
+                    sft_by_res.setdefault(r["agent"], []).append(row)
+    except Exception:
+        pass
     if not sft and not dpo:
         return {"generation": current_gen, "sft_count": 0, "dpo_count": 0,
                 "elo": db.get_elo(), "note": "no harvestable data yet"}

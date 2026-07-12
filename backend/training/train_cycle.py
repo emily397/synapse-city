@@ -90,8 +90,14 @@ def main(gen: int, incumbent: str, resident: str | None = None):
         run("export_gguf.py", "--gen", g, "--adapter", "dpo", "--tag", tag, env=env)
         print(f"\n✅ {tag} PROMOTED over {incumbent}.")
         if resident:
-            print(f"   Update personas.json: set {resident}'s model to '{tag}' "
-                  f"and restart the orchestrator.")
+            # close the loop: the resident's brain is swapped automatically;
+            # the supervisor's next backend restart serves the new self
+            data = json.loads(PERSONAS.read_text(encoding="utf-8"))
+            for p in data["agents"]:
+                if p["id"] == resident:
+                    p["model"] = tag
+            PERSONAS.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            print(f"   personas.json updated: {resident} now runs {tag}.")
         else:
             print(f"   set SYNAPSE_CHAT_MODEL={tag} and restart the orchestrator.")
     else:

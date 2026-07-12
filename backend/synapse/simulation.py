@@ -337,7 +337,9 @@ class Simulation:
         a.partner, b.partner = b.id, a.id
         self._activity[district.kind] = self._activity.get(district.kind, 0) + 1
         self._grant_district_xp(district.id, 3)
-        judge = self.judge if district.kind == "debate" else None
+        # the magistrate now scores teaching and building sessions too (~3x fuel)
+        judge = (self.judge if district.kind in ("debate", "teaching", "building")
+                 else None)
 
         h = (self.minutes // 60) % 24
         tod = ("early morning" if h < 10 else "midday" if h < 15
@@ -383,6 +385,15 @@ class Simulation:
                 BUS.publish({"type": "move", "agent": a.id, "to_district": nxt, "pos": a.pos})
                 if not a.path:
                     a.status = "sleeping"
+            elif a.status == "sleeping":
+                # night study: minds work by lamplight (guaranteed nightly
+                # verified-task quota without stealing daytime social life)
+                if (self.rng.random() < 0.10
+                        and a.id not in self.proving.busy):
+                    t = asyncio.create_task(
+                        self.proving.attempt(a, self.tick, self.rng))
+                    self._convos.add(t)
+                    t.add_done_callback(self._convos.discard)
             elif a.district == home:
                 a.status = "sleeping"
                 insight = await a.mem.reflect(a.p, self.tick)

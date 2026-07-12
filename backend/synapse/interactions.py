@@ -173,8 +173,8 @@ async def run_conversation(a: Agent, b: Agent, district, db: DB, tick: int,
         surv.shift_affinity(a.id, b.id, rng.uniform(-0.6, 0.8))
         surv.shift_affinity(b.id, a.id, rng.uniform(-0.6, 0.8))
 
-    # Court: the magistrate scores the debate -> preference signal.
-    if kind == "debate" and judge is not None:
+    # The magistrate scores debates, lessons, and build-talk -> preference signal.
+    if judge is not None:
         outcome = await _judge_debate(judge, a, b, topic, transcript, iid, db)
         if surv is not None and outcome:
             w, l = outcome

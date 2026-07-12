@@ -17,6 +17,11 @@ REPLAY_FRACTION = float(os.getenv("SYNAPSE_REPLAY_FRACTION", "0.3"))
 # Per-resident growth: when set, all dataset paths get the resident suffix, so
 # a resident's LoRA trains ONLY on its own verified rows.
 RESIDENT = os.getenv("SYNAPSE_RESIDENT", "").strip()
+if RESIDENT:
+    # personal runs get their own adapter namespace: no clobbering between
+    # residents, and each resident's lineage ("genes") stays intact
+    ADAPTERS = RUN / "adapters" / RESIDENT
+    ADAPTERS.mkdir(parents=True, exist_ok=True)
 
 
 def _suffixed(suffix: str) -> str:
