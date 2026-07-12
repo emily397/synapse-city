@@ -143,7 +143,7 @@ async def run_conversation(a: Agent, b: Agent, district, db: DB, tick: int,
                 role = "assistant" if who == speaker.id else "user"
                 convo.append({"role": role, "content": txt})
 
-        text = await llm.chat(convo, model=speaker.model, max_tokens=90)
+        text = await llm.chat(convo, model=speaker.model, max_tokens=150)
         prompt_text = convo[-1]["content"]
         db.add_exchange(iid, turn, speaker.id, prompt_text, text)
         transcript.append((speaker.id, text))
