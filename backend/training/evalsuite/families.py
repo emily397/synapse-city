@@ -10,6 +10,8 @@ so no eval task can ever leak into training.
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
 import random
 import string
 
@@ -324,7 +326,240 @@ def set_relation(seed):
     }
 
 
+# =========================================================== INTEGRATION == #
+
+def json_pluck(seed):
+    rng = random.Random(seed)
+    k = _words(rng, 3)
+    d = {k[0]: {k[1]: {k[2]: rng.randint(1, 99)}}}
+    path = ".".join(k)
+    val = d[k[0]][k[1]][k[2]]
+    return {"kind": "code",
+            "prompt": ("Write `solve(d, path)` returning the value in nested dict d "
+                       "at the dot-separated key path (like 'a.b.c').\n"
+                       f"Example: solve({d!r}, {path!r})\n"
+                       "Reply with one ```python code block."),
+            "check": f"assert solve({d!r}, {path!r}) == {val!r}\n"
+                     "assert solve({'x': {'y': 5}}, 'x.y') == 5"}
+
+
+def schema_map(seed):
+    rng = random.Random(seed)
+    src, dst = _words(rng, 3), _words(rng, 3)
+    d = {s: rng.randint(1, 9) for s in src}
+    mapping = dict(zip(src, dst))
+    out = {dst[i]: d[src[i]] for i in range(3)}
+    return {"kind": "code",
+            "prompt": ("Write `solve(d, mapping)` returning a new dict with each key of "
+                       "d renamed per mapping (old->new); keys absent from mapping are "
+                       "dropped. This adapts one API's fields onto another's.\n"
+                       f"Example: solve({d!r}, {mapping!r})\n"
+                       "Reply with one ```python code block."),
+            "check": f"assert solve({d!r}, {mapping!r}) == {out!r}\n"
+                     "assert solve({'a': 1}, {'a': 'b'}) == {'b': 1}"}
+
+
+def flatten_dict(seed):
+    rng = random.Random(seed)
+    k = _words(rng, 3)
+    d = {k[0]: {k[1]: rng.randint(1, 9)}, k[2]: rng.randint(1, 9)}
+    flat = {f"{k[0]}.{k[1]}": d[k[0]][k[1]], k[2]: d[k[2]]}
+    return {"kind": "code",
+            "prompt": ("Write `solve(d)` that flattens a nested dict (depth up to 2, int "
+                       "values) into one level with dot-joined keys.\n"
+                       f"Example input: {d!r}\n"
+                       "Reply with one ```python code block."),
+            "check": f"assert solve({d!r}) == {flat!r}\n"
+                     "assert solve({'a': {'b': 1}}) == {'a.b': 1}"}
+
+
+def paginate_merge(seed):
+    rng = random.Random(seed)
+    ids = rng.sample(range(1, 30), rng.randint(5, 7))
+    dup = rng.choice(ids)
+    recs = [{"id": i, "v": i * 2} for i in ids] + [{"id": dup, "v": dup * 2}]
+    pages = [recs[:3], recs[3:6], recs[6:]]
+    seen = {}
+    for p in pages:
+        for r in p:
+            seen.setdefault(r["id"], r)
+    out = sorted(seen.values(), key=lambda r: r["id"])
+    return {"kind": "code",
+            "prompt": ("Write `solve(pages)` that merges a list of pages (each a list of "
+                       "dicts having an 'id') into one list, keeping the FIRST occurrence "
+                       "of each id, sorted by id ascending.\n"
+                       "Reply with one ```python code block."),
+            "check": f"assert solve({pages!r}) == {out!r}"}
+
+
+def csv_column_sum(seed):
+    rng = random.Random(seed)
+    col = rng.choice(["amount", "qty", "price"])
+    vals = [rng.randint(1, 50) for _ in range(rng.randint(3, 6))]
+    csv_text = f"name,{col}\n" + "\n".join(f"item{i},{v}" for i, v in enumerate(vals))
+    return {"kind": "code",
+            "prompt": ("Write `solve(csv_text, col)` that parses CSV text (comma-separated, "
+                       "first row is headers) and returns the integer sum of the named "
+                       f"column.\nColumn: {col!r}\n"
+                       "Reply with one ```python code block."),
+            "check": f"assert solve({csv_text!r}, {col!r}) == {sum(vals)}"}
+
+
+# ============================================================ ALGORITHMS == #
+
+def fib_n(seed):
+    rng = random.Random(seed)
+    n = rng.randint(10, 30)
+    a, b = 0, 1
+    for _ in range(n):
+        a, b = b, a + b
+    return {"kind": "answer",
+            "prompt": (f"Compute the {n}th Fibonacci number (F(0)=0, F(1)=1).\n"
+                       "End with the final line 'ANSWER: <integer>'."),
+            "expected": str(a)}
+
+
+def binary_search(seed):
+    rng = random.Random(seed)
+    xs = sorted(rng.sample(range(1, 80), rng.randint(6, 12)))
+    t = rng.choice(xs)
+    return {"kind": "code",
+            "prompt": ("Write `solve(xs, t)` returning the index of t in the sorted list "
+                       "xs via binary search, or -1 if absent.\n"
+                       f"Example: solve({xs!r}, {t})\n"
+                       "Reply with one ```python code block."),
+            "check": f"assert solve({xs!r}, {t}) == {xs.index(t)}\n"
+                     f"assert solve({xs!r}, 999) == -1"}
+
+
+def merge_intervals(seed):
+    rng = random.Random(seed)
+    ivs, start = [], rng.randint(0, 5)
+    for _ in range(rng.randint(3, 5)):
+        s = start + rng.randint(0, 4)
+        e = s + rng.randint(1, 5)
+        ivs.append([s, e])
+        start = e + rng.randint(-1, 3)
+    rng.shuffle(ivs)
+    merged = [list(x) for x in sorted(ivs)]
+    out = [merged[0]]
+    for a, b in merged[1:]:
+        if a <= out[-1][1]:
+            out[-1][1] = max(out[-1][1], b)
+        else:
+            out.append([a, b])
+    return {"kind": "code",
+            "prompt": ("Write `solve(intervals)` that merges overlapping [start,end] "
+                       "intervals and returns them sorted, as a list of [start,end] lists.\n"
+                       f"Example input: {ivs!r}\n"
+                       "Reply with one ```python code block."),
+            "check": f"assert solve({ivs!r}) == {out!r}"}
+
+
+def longest_common_prefix(seed):
+    rng = random.Random(seed)
+    base = "".join(rng.choice(string.ascii_lowercase) for _ in range(rng.randint(2, 4)))
+    strs = [base + "".join(rng.choice(string.ascii_lowercase)
+                           for _ in range(rng.randint(1, 4)))
+            for _ in range(rng.randint(2, 4))]
+    lcp = strs[0]
+    for s in strs[1:]:
+        while not s.startswith(lcp):
+            lcp = lcp[:-1]
+    return {"kind": "code",
+            "prompt": ("Write `solve(strs)` returning the longest common prefix of a list "
+                       "of strings ('' if none).\n"
+                       f"Example input: {strs!r}\n"
+                       "Reply with one ```python code block."),
+            "check": f"assert solve({strs!r}) == {lcp!r}\n"
+                     "assert solve(['ab', 'a']) == 'a'"}
+
+
+# ============================================ DEFENSIVE AUTH / SECURITY == #
+
+def hmac_verify(seed):
+    rng = random.Random(seed)
+    secret = "".join(rng.choice(string.ascii_letters) for _ in range(8))
+    payload = "".join(rng.choice(string.ascii_letters) for _ in range(12))
+    sig = hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
+    return {"kind": "code",
+            "prompt": ("Write `solve(payload, secret, sig)` returning True iff sig is the "
+                       "correct HMAC-SHA256 hex digest of payload keyed by secret. Use "
+                       "hmac.compare_digest for the check. This verifies an INCOMING "
+                       "webhook signature.\n"
+                       "Reply with one ```python code block."),
+            "check": f"assert solve({payload!r}, {secret!r}, {sig!r}) is True\n"
+                     f"assert solve({payload!r}, {secret!r}, {'0' * 64!r}) is False"}
+
+
+def jwt_claims_valid(seed):
+    rng = random.Random(seed)
+    now = rng.randint(1000, 2000)
+    iss = rng.choice(["auth.example", "id.acme", "login.corp"])
+    exp = now + rng.choice([-50, 50, 100])
+    claims = {"iss": iss, "exp": exp, "sub": "u1"}
+    return {"kind": "code",
+            "prompt": ("Write `solve(claims, now, expected_iss)` returning True iff a "
+                       "decoded token is valid: claims['exp'] is strictly greater than now "
+                       "AND claims['iss'] equals expected_iss.\n"
+                       "Reply with one ```python code block."),
+            "check": f"assert solve({claims!r}, {now}, {iss!r}) is {exp > now}\n"
+                     f"assert solve({claims!r}, {now}, 'wrong.iss') is False"}
+
+
+def mask_secret(seed):
+    rng = random.Random(seed)
+    tok = "".join(rng.choice(string.ascii_letters + string.digits)
+                  for _ in range(rng.randint(8, 16)))
+    masked = "*" * (len(tok) - 4) + tok[-4:]
+    return {"kind": "code",
+            "prompt": ("Write `solve(s)` that redacts a secret for safe logging: replace "
+                       "all but the last 4 characters with '*'. Strings of length <= 4 "
+                       "become all '*'.\n"
+                       f"Example: solve({tok!r})\n"
+                       "Reply with one ```python code block."),
+            "check": f"assert solve({tok!r}) == {masked!r}\n"
+                     "assert solve('ab') == '**'"}
+
+
+def rate_limiter(seed):
+    rng = random.Random(seed)
+    limit = rng.randint(2, 3)
+    window = rng.choice([5, 10])
+    times = sorted(rng.randint(0, 30) for _ in range(rng.randint(5, 8)))
+    allowed, hist = [], []
+    for t in times:
+        hist = [x for x in hist if x > t - window]
+        if len(hist) < limit:
+            allowed.append(True)
+            hist.append(t)
+        else:
+            allowed.append(False)
+    return {"kind": "code",
+            "prompt": ("Write `solve(times, limit, window)` for a sliding-window rate "
+                       "limiter: given ascending request timestamps, return a list of "
+                       "booleans marking each request allowed if fewer than `limit` "
+                       "requests were ALLOWED in the interval (t-window, t]. Rejected "
+                       "requests do not count.\n"
+                       f"Params: limit={limit}, window={window}\n"
+                       "Reply with one ```python code block."),
+            "check": f"assert solve({times!r}, {limit}, {window}) == {allowed!r}"}
+
+
 FAMILIES = {
+    "json_pluck": json_pluck,
+    "schema_map": schema_map,
+    "flatten_dict": flatten_dict,
+    "paginate_merge": paginate_merge,
+    "csv_column_sum": csv_column_sum,
+    "fib_n": fib_n,
+    "binary_search": binary_search,
+    "merge_intervals": merge_intervals,
+    "longest_common_prefix": longest_common_prefix,
+    "hmac_verify": hmac_verify,
+    "jwt_claims_valid": jwt_claims_valid,
+    "mask_secret": mask_secret,
+    "rate_limiter": rate_limiter,
     "reverse_words": reverse_words,
     "dedupe_keep_order": dedupe_keep_order,
     "chunk_list": chunk_list,

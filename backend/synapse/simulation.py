@@ -45,7 +45,8 @@ class Simulation:
         self.tick = int(st.get("tick", 0))
         self.minutes = int(st.get("minutes", CONFIG.day_start_hour * 60))
         self.day = int(st.get("day", 1))
-        self.generation = int(st.get("generation", 0))
+        self.generation = int(st.get("generation", 0))   # dataset/harvest version
+        self._trained_gens = 0                            # ACTUAL trained cycles
         self.running = False
         self._convos: set[asyncio.Task] = set()
         self._activity: dict[str, int] = {}      # kind -> recent conversation count
@@ -66,7 +67,7 @@ class Simulation:
         h = (self.minutes // 60) % 24
         return {"tick": self.tick, "day": self.day, "hour": h,
                 "minute": self.minutes % 60, "night": self._is_night(h),
-                "generation": self.generation}
+                "generation": self._trained_gens}
 
     def _is_night(self, h: int) -> bool:
         return h >= CONFIG.night_start_hour or h < CONFIG.day_start_hour
@@ -74,7 +75,19 @@ class Simulation:
     def _stats(self) -> dict:
         s = self.db.counts()
         s["elo"] = self.db.get_elo()
-        s["generation"] = self.generation
+        # honest counters: 'generation' = ACTUAL completed training cycles
+        # (run/eval/gen*.json), not harvest snapshots
+        try:
+            self._trained_gens = len(list(
+                (CONFIG.db_file.parent / "eval").glob("gen*.json")))
+        except Exception:
+            pass
+        s["generation"] = self._trained_gens
+        s["datasets_harvested"] = self.generation
+        s["verified_solves"] = self.db._one(
+            "SELECT COALESCE(SUM(pass),0) AS n FROM attempts")["n"] \
+            if self.db._one("SELECT name FROM sqlite_master WHERE name='attempts'") \
+            else 0
         s["backend"] = CONFIG.llm_backend
         s["eval"] = self.db.latest_eval()
         s["eval_history"] = self.db.eval_history()
