@@ -21,12 +21,11 @@ $JudgeTag = "qwen2.5:32b"
 
 function Step($m) { Write-Host ("==> " + $m) }
 
-# -- 1. pause: lock stops the supervisor from resurrecting the backend -------
-Step "pausing town (TRAINING.lock + stop uvicorn)"
+# -- 1. pause: the lock makes the SIM rest (no model calls) while the backend
+#    stays UP and connected, so the public 3D town never goes offline. -------
+Step "pausing town (TRAINING.lock; sim rests, backend stays live)"
 Set-Content $Lock ("training gen{0} started {1}" -f $Gen, (Get-Date -Format s))
-Get-WmiObject Win32_Process -Filter "Name='python.exe'" |
-  Where-Object { $_.CommandLine -match 'synapse\.server' } |
-  ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+Start-Sleep -Seconds 4    # let the sim notice the lock and stop LLM calls
 
 # -- 2. free VRAM: unload every model Ollama holds ----------------------------
 Step "unloading Ollama models"

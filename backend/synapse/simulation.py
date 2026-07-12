@@ -6,7 +6,14 @@ moving while models think.
 from __future__ import annotations
 
 import asyncio
+import os
 import random
+from pathlib import Path
+
+# While this file exists, a training cycle owns the GPU and the sim rests
+# (backend stays up, no model calls). ops/gpu_handover.ps1 creates/removes it.
+_TRAINING_LOCK = Path(os.getenv("SYNAPSE_TRAINING_LOCK",
+                                r"C:\Users\nirvana\.synapse\TRAINING.lock"))
 
 from . import harvest, worldgen
 from .agent import Agent
@@ -126,6 +133,15 @@ class Simulation:
         self.running = True
         BUS.publish(self.snapshot())
         while self.running:
+            if _TRAINING_LOCK.exists():
+                # A training cycle holds the GPU: the town RESTS instead of
+                # going dark. The backend stays up and connected, the clock
+                # ticks, avatars drift home — no LLM/embedding calls (the GPU
+                # is busy learning). The town wakes and talks again when the
+                # cycle finishes and the lock is released.
+                await self._rest_tick()
+                await asyncio.sleep(CONFIG.tick_seconds)
+                continue
             await self.step()
             BUS.publish({"type": "clock", **self._clock()})
             if self.tick % CONFIG.harvest_interval == 0:
@@ -136,6 +152,23 @@ class Simulation:
                              ("day", self.day), ("generation", self.generation)):
                     self.db._upsert("simstate", "k", ["k", "v"], (k, v))
             await asyncio.sleep(CONFIG.tick_seconds)
+
+    async def _rest_tick(self):
+        """GPU-free tick used while a training cycle runs: advance time, drift
+        any travellers one hop, keep clients painted — but make NO model calls."""
+        self.minutes += CONFIG.minutes_per_tick
+        for a in self.agents.values():
+            if a.status == "traveling" and a.path:
+                nxt = a.path.pop(0)
+                a.district = nxt
+                a.pos = dict(self.world.districts[nxt].pos)
+                BUS.publish({"type": "move", "agent": a.id, "to_district": nxt,
+                             "pos": a.pos})
+                if not a.path:
+                    a.status = "idle"
+        BUS.publish({"type": "clock", **self._clock()})
+        BUS.publish({"type": "toast", "text": "the town rests while the elders "
+                     "study by lamplight..."}) if self.tick % 20 == 0 else None
 
     def stop(self):
         self.running = False
