@@ -46,6 +46,7 @@ class ProvingGrounds:
                 " id SERIAL PRIMARY KEY, agent TEXT, family TEXT, seed INTEGER,"
                 " tick INTEGER, pass INTEGER, prompt TEXT, response TEXT)")
         self.busy: set[str] = set()
+        self.library = None                # set by the simulation
 
     def _pick_family(self, aid: str, rng: random.Random) -> str:
         stats = {f: (0, 0) for f in FAMILIES}
@@ -71,11 +72,23 @@ class ProvingGrounds:
             fam = self._pick_family(aid, rng)
             seed = rng.randrange(TRAIN_SEED_MAX)
             task = make_task(fam, seed)
+            sys_p = SYSTEM
+            used_skill = False
+            if self.library is not None:
+                pb = self.library.skill_for(aid, fam)
+                if pb:
+                    sys_p += f"\n\nYour own proven playbook for this kind:\n{pb}"
+                    used_skill = True
             out = await llm.chat(
-                [{"role": "system", "content": SYSTEM},
+                [{"role": "system", "content": sys_p},
                  {"role": "user", "content": task["prompt"]}],
                 model=agent.model, temperature=0.3, max_tokens=700)
             ok, _detail = verify(task, out)
+            if self.library is not None:
+                if ok and used_skill:
+                    self.library.record_skill_win(aid, fam)
+                if ok:
+                    await self.library.maybe_author_skill(agent, fam, tick)
             self.db._run(
                 "INSERT INTO attempts(agent,family,seed,tick,pass,prompt,response)"
                 " VALUES(?,?,?,?,?,?,?)",

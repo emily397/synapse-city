@@ -32,6 +32,9 @@ class Simulation:
         self.judge = next((a for a in self.agents.values() if a.p.get("is_judge")), None)
         self.survival = Survival(self.db, list(self.agents), world=self.world)
         self.proving = ProvingGrounds(self.db)
+        from .library import Library
+        self.library = Library(self.db)
+        self.proving.library = self.library
         for a in self.agents.values():
             a.survival = self.survival
         self.rng = random.Random(CONFIG.seed)
@@ -357,6 +360,7 @@ class Simulation:
             "live_topics": world_topics(self.world, self.survival, self.db,
                                         self.day, self.rng),
             "survival": self.survival,
+            "library": self.library,
         }
         if self.survival.event:
             ctx["event"] = (f"The town is in the grip of "
@@ -413,6 +417,10 @@ class Simulation:
             if a.status == "sleeping":
                 a.status = "idle"
                 a.cooldown = 0
+        try:
+            await self.library.nightly_distill(self.db, self.day)
+        except Exception:
+            pass
         await self._harvest()
 
     async def _harvest(self):

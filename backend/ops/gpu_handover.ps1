@@ -72,6 +72,21 @@ if (-not $DryRun) {
       $Gen, $e.mode, $e.challenger_rate, $e.incumbent_rate, $e.sign_test_p, $promoted)
   }
 }
+# -- weekly external regression check: GSM8K slice via lm-eval (WSL) --------
+$gsmMarker = "C:\Users\nirvana\.synapse\gsm8k_" + (Get-Date -UFormat %V)   # ISO week
+if (-not $DryRun -and -not (Test-Path $gsmMarker)) {
+  Set-Content $gsmMarker "started"
+  Step "weekly GSM8K regression slice (external, catches narrow overfitting)"
+  $gsmBash = "WINIP=`$(ip route show default | awk '{print `$3}'); " +
+    "/root/proprietary-model/.venv/bin/python -m lm_eval " +
+    "--model local-chat-completions " +
+    "--model_args base_url=http://`${WINIP}:11434/v1/chat/completions,model=$Incumbent,num_concurrent=1 " +
+    "--tasks gsm8k --limit 50 --apply_chat_template 2>&1 | tail -5"
+  $gsm = wsl -d Ubuntu -u root -- bash -c $gsmBash
+  Add-Content $Report ("- {0} :: gsm8k slice ({1}) :: {2}" -f
+    (Get-Date -Format s), $Incumbent, (($gsm | Select-String "gsm8k|acc" | Select-Object -First 1) -replace '\s+', ' '))
+}
+
 if (-not (Test-Path $Report)) {
   Set-Content $Report "# Synapse City training report`n"
 }

@@ -120,6 +120,11 @@ async def run_conversation(a: Agent, b: Agent, district, db: DB, tick: int,
         listener = speakers[(turn + 1) % 2]
         query = transcript[-1][1] if transcript else topic
         memories = await speaker.mem.retrieve(query, tick, k=3)
+        lib = ctx.get("library")
+        if lib is not None and turn == 0:
+            # shared town wisdom: knowledge compounds across residents
+            notes = await lib.retrieve(query, k=1)
+            memories = memories + [f"(town wisdom) {n}" for n in notes]
         other = f"You are talking with {listener.p['name']}, {listener.p['role']}."
         surv0 = ctx.get("survival")
         if surv0 is not None:

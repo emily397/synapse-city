@@ -132,6 +132,18 @@ def _suite_gate(gen: int, challenger_gen, incumbent: str, suite: str) -> bool:
     from evalsuite.verify import verify
 
     tasks = load_suite(Path(__file__).resolve().parent / "evalsuite" / suite)
+    # incumbent must actually be servable: warm it up, fail loudly if not.
+    # (a dead incumbent scored 0% in gen1 and silently corrupted the gate)
+    for _ in range(3):
+        try:
+            ollama_chat(incumbent, "say OK", )
+            break
+        except Exception:
+            import time as _t
+            _t.sleep(20)
+    else:
+        raise SystemExit(f"incumbent {incumbent} unreachable — refusing to gate "
+                         f"against a dead baseline")
     ch_wins = inc_wins = 0
     ch_pass = inc_pass = 0
     records = []
@@ -142,10 +154,13 @@ def _suite_gate(gen: int, challenger_gen, incumbent: str, suite: str) -> bool:
             ch_ok, _ = verify(t, ch_out)
         except Exception:                            # noqa: BLE001
             ch_ok = False
-        try:
-            inc_ok, _ = verify(t, ollama_chat(incumbent, t["prompt"]))
-        except Exception:                            # noqa: BLE001
-            inc_ok = False
+        inc_ok = False
+        for _try in range(2):                        # retry once: never let a
+            try:                                     # transient error score 0
+                inc_ok, _ = verify(t, ollama_chat(incumbent, t["prompt"]))
+                break
+            except Exception:                        # noqa: BLE001
+                pass
         ch_pass += ch_ok
         inc_pass += inc_ok
         if ch_ok and not inc_ok:
