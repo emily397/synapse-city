@@ -21,7 +21,7 @@ def main(gen: int, epochs: float):
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=BASE_MODEL, max_seq_length=MAX_SEQ, load_in_4bit=True)
     model = FastLanguageModel.get_peft_model(
-        model, r=16, lora_alpha=16, lora_dropout=0.0, bias="none",
+        model, r=16, lora_alpha=16, lora_dropout=0.05, bias="none",
         target_modules=["q_proj", "k_proj", "v_proj", "o_proj",
                         "gate_proj", "up_proj", "down_proj"],
         use_gradient_checkpointing="unsloth", random_state=1337)
@@ -55,6 +55,8 @@ def main(gen: int, epochs: float):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--gen", type=int, required=True)
-    ap.add_argument("--epochs", type=float, default=2.0)
+    # Small per-resident corpora overfit fast; one clean pass over
+    # verifier-shaped targets beats two passes that memorise noise.
+    ap.add_argument("--epochs", type=float, default=1.0)
     a = ap.parse_args()
     main(a.gen, a.epochs)

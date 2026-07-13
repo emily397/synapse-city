@@ -38,6 +38,65 @@ def breaks_fiction(text: str) -> bool:
 
 
 # --------------------------------------------------------------------------- #
+# SFT target hygiene. The eval-gate verifier (training/evalsuite/verify.py)
+# rewards exactly two shapes: a ```python block containing `def solve` for code
+# tasks, and a bare `ANSWER: <value>` line for answer tasks. Residents' raw
+# Proving-Grounds outputs pass verification but carry markdown prose and
+# `# Example usage` / print() trailers. Training on that noise drifts a resident
+# toward verbose code even on answer tasks — which is why quinn-gen8 collapsed to
+# 0/4 on caesar/arith (it stopped emitting the ANSWER: line). We normalise every
+# task target to the minimal passing form before it ever becomes a weight update.
+_CODE_BLOCK_RX = re.compile(r"```(?:python|py)?\s*\n(.*?)```", re.DOTALL)
+_ANSWER_RX = re.compile(r"(?im)^\s*ANSWER:\s*(.+?)\s*$")
+
+
+def _strip_usage(code: str) -> str:
+    """Drop example-usage/test scaffolding that follows the solve() definition."""
+    out, seen_solve = [], False
+    for ln in code.splitlines():
+        s = ln.strip()
+        if s.startswith("def solve"):
+            seen_solve = True
+        if seen_solve and ln[:1] not in (" ", "\t") and s:
+            if (re.match(r"(?i)#\s*(example|usage|test|demo|sample)", s)
+                    or s.startswith("print(")
+                    or s.startswith("if __name__")
+                    or s.startswith("assert ")
+                    or re.match(r"^[A-Za-z_]\w*\s*=", s)):   # top-level example input
+                break
+        out.append(ln)
+    while out and not out[-1].strip():
+        out.pop()
+    return "\n".join(out)
+
+
+def clean_task_target(response: str) -> str:
+    """Strip example-usage/prose noise while PRESERVING whatever the verifier
+    needs. verify.py checks code tasks via a ```python `def solve` block and
+    answer tasks via an `ANSWER:` line — a response can legitimately carry both
+    (code that computes the answer). So we never collapse one into the other: we
+    keep a clean solve() block if present, keep the ANSWER line if present, and
+    only drop the trailing `# Example usage`/print scaffolding that teaches
+    verbosity. Correctness is never reduced; only noise is removed."""
+    if not response:
+        return response
+    blocks = _CODE_BLOCK_RX.findall(response)
+    code = next((b for b in reversed(blocks) if "def solve" in b), None)
+    if code is None:
+        m = re.search(r"(def solve\(.*)", response, re.DOTALL)
+        code = m.group(1) if m else None
+    ans = _ANSWER_RX.findall(response)
+    if code is not None:
+        cleaned = f"```python\n{_strip_usage(code).strip()}\n```"
+        if ans:                            # code-solved answer task: keep both
+            cleaned += f"\nANSWER: {ans[-1].strip()}"
+        return cleaned
+    if ans:                                # pure answer task: one clean line
+        return f"ANSWER: {ans[-1].strip()}"
+    return response.strip()                 # conversation/other: leave content
+
+
+# --------------------------------------------------------------------------- #
 def recompute_elo(db: DB, agent_ids: list[str]) -> None:
     rating = {a: 1000.0 for a in agent_ids}
     games = {a: 0 for a in agent_ids}
@@ -125,17 +184,21 @@ async def harvest_cycle(db: DB, current_gen: int, agents: dict) -> dict | None:
             if r["pass"]:
                 row = {"messages": [
                     {"role": "user", "content": r["prompt"]},
-                    {"role": "assistant", "content": r["response"]}]}
+                    {"role": "assistant",
+                     "content": clean_task_target(r["response"])}]}
                 sft.append(row)
                 sft_by_res.setdefault(r["agent"], []).append(row)
                 n_verified += 1
-        # correct-vs-incorrect on the SAME task -> DPO pairs
+        # correct-vs-incorrect on the SAME task -> DPO pairs. The chosen answer is
+        # cleaned to the minimal passing form so the preference also teaches
+        # "clean verifier-shaped output" over the messy losing one.
         for p in db._all(
                 "SELECT a.prompt AS prompt, a.response AS good, b.response AS bad,"
                 " a.agent AS agent FROM attempts a JOIN attempts b"
                 " ON a.family=b.family AND a.seed=b.seed"
                 " AND a.pass=1 AND b.pass=0"):
-            row = {"prompt": p["prompt"], "chosen": p["good"], "rejected": p["bad"]}
+            row = {"prompt": p["prompt"],
+                   "chosen": clean_task_target(p["good"]), "rejected": p["bad"]}
             dpo.append(row)
             dpo_by_res.setdefault(p["agent"], []).append(row)
     except Exception:

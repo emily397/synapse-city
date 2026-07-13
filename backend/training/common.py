@@ -43,6 +43,7 @@ def with_replay(gen: int, suffix: str) -> list[dict]:
     entire lived corpus, which is also the correct anti-collapse anchor: all
     prior data is always present, so the policy cannot drift off-distribution.
     The `gen` argument is kept for the filename/version, not to slice data."""
+    base_suffix = suffix
     suffix = _suffixed(suffix)
     rows: list[dict] = []
     seen: set[str] = set()
@@ -52,4 +53,31 @@ def with_replay(gen: int, suffix: str) -> list[dict]:
             if key not in seen:
                 seen.add(key)
                 rows.append(r)
+    if base_suffix == "sft":
+        rows = _balance_sft(rows)
     return rows
+
+
+def _is_task_row(r: dict) -> bool:
+    """A row whose target is verifier-shaped (```python def solve / ANSWER:).
+    These are the rows that actually move the eval-gate's task suite."""
+    a = next((m.get("content", "") for m in (r.get("messages") or [])
+              if m.get("role") == "assistant"), "")
+    a = a.lstrip()
+    return a.startswith("```python") or a.startswith("ANSWER:")
+
+
+def _balance_sft(rows: list[dict],
+                 max_conv_ratio: float = 0.4) -> list[dict]:
+    """Keep execution-verified TASK rows dominant. Residents accumulate far more
+    chit-chat than task attempts; unbalanced, conversation drowns the families
+    the gate tests, so a personal LoRA can drift off the verifier's formats
+    (quinn-gen8: 80% conversation/misc, collapsed on caesar/arith). We cap
+    conversational rows so tasks stay the majority, while still keeping enough
+    voice for the resident to sound like itself. Deterministic (stable anchor)."""
+    tasks = [r for r in rows if _is_task_row(r)]
+    conv = [r for r in rows if not _is_task_row(r)]
+    if not tasks:
+        return rows                          # no task fuel yet; keep everything
+    cap = int(len(tasks) * (max_conv_ratio / (1.0 - max_conv_ratio)))
+    return tasks + conv[:cap]
