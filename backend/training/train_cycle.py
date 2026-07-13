@@ -88,7 +88,13 @@ def main(gen: int, incumbent: str, resident: str | None = None):
         personas = json.loads(PERSONAS.read_text(encoding="utf-8"))["agents"]
         incumbent = next(x["model"] for x in personas if x["id"] == resident)
         tag = f"{resident}-gen{gen}"
-    if run("train_lora.py", "--gen", g, env=env) != 0:
+    # Epochs scale to base strength. Tiny/weak learners (0.5B-1.5B) have real
+    # headroom and need MORE passes to actually absorb the curriculum (Sol tied
+    # her base at 1 epoch — learned some, forgot some). Strong instruct bases
+    # (7B+) overfit fast, so they stay at a single gentle pass.
+    tagl = (incumbent or "").lower()
+    epochs = "3" if any(s in tagl for s in ("0.5b", "1.5b")) else "1"
+    if run("train_lora.py", "--gen", g, "--epochs", epochs, env=env) != 0:
         sys.exit("SFT failed")
     # DPO is OPTIONAL: many residents have no judged Arena pairs yet (and none of
     # the execution-verified correct-vs-incorrect kind). Missing preference data
