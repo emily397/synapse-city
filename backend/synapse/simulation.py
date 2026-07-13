@@ -41,6 +41,8 @@ class Simulation:
         }
         self.judge = next((a for a in self.agents.values() if a.p.get("is_judge")), None)
         self.survival = Survival(self.db, list(self.agents), world=self.world)
+        from .consequences import Consequences
+        self.consequences = Consequences(self.db)      # causation / domino effects
         self.proving = ProvingGrounds(self.db)
         from .library import Library
         self.library = Library(self.db)
@@ -551,6 +553,21 @@ class Simulation:
         dt.add_done_callback(self._convos.discard)
         try:
             await self._family_life()
+        except Exception:
+            import traceback
+            traceback.print_exc()
+        # Causation: yesterday's actions ripple through shared resources today,
+        # in logical dominoes. Each consequence is a REAL effect AND a remembered
+        # cause->effect, so residents learn how their world works.
+        try:
+            for aid, msg in self.consequences.settle(
+                    self.survival, self.agents, self.day, self.rng):
+                a = self.agents.get(aid)
+                if a:
+                    ct = asyncio.create_task(
+                        a.mem.observe(msg, self.tick, kind="consequence"))
+                    self._convos.add(ct)
+                    ct.add_done_callback(self._convos.discard)
         except Exception:
             import traceback
             traceback.print_exc()
