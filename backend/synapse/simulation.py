@@ -57,7 +57,8 @@ class Simulation:
         self.minutes = int(st.get("minutes", CONFIG.day_start_hour * 60))
         self.day = int(st.get("day", 1))
         self.generation = int(st.get("generation", 0))   # dataset/harvest version
-        self._trained_gens = 0                            # ACTUAL trained cycles
+        self._trained_gens = 0                            # gate evaluations run
+        self._promotions = 0                              # models that WON the gate
         self.running = False
         self._convos: set[asyncio.Task] = set()
         self._activity: dict[str, int] = {}      # kind -> recent conversation count
@@ -78,7 +79,7 @@ class Simulation:
         h = (self.minutes // 60) % 24
         return {"tick": self.tick, "day": self.day, "hour": h,
                 "minute": self.minutes % 60, "night": self._is_night(h),
-                "generation": self._trained_gens}
+                "generation": self._promotions}
 
     def _is_night(self, h: int) -> bool:
         return h >= CONFIG.night_start_hour or h < CONFIG.day_start_hour
@@ -86,14 +87,28 @@ class Simulation:
     def _stats(self) -> dict:
         s = self.db.counts()
         s["elo"] = self.db.get_elo()
-        # honest counters: 'generation' = ACTUAL completed training cycles
-        # (run/eval/gen*.json), not harvest snapshots
+        # HONEST generation accounting — three different things, no more conflation:
+        #   gate_evals         = adapters put through the promotion gate (attempts)
+        #   promotions         = residents ACTUALLY running an evolved model that
+        #                        beat its base (a real generation of evolution)
+        #   datasets_harvested = harvest dataset snapshots (NOT model generations)
+        # The headline 'generation' is promotions: a town-shaped model has to WIN
+        # the gate to count, so this stays 0 until something genuinely improves.
         try:
             self._trained_gens = len(list(
                 (CONFIG.db_file.parent / "eval").glob("gen*.json")))
         except Exception:
             pass
-        s["generation"] = self._trained_gens
+
+        def _evolved(m: str) -> bool:
+            m = m or ""
+            return ("-gen" in m) or m.startswith("synapse-") or m.startswith("child-")
+
+        promotions = sum(1 for a in self.agents.values() if _evolved(a.model))
+        self._promotions = promotions
+        s["gate_evals"] = self._trained_gens
+        s["promotions"] = promotions
+        s["generation"] = promotions
         s["datasets_harvested"] = self.generation
         s["verified_solves"] = self.db._one(
             "SELECT COALESCE(SUM(pass),0) AS n FROM attempts")["n"] \
