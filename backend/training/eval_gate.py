@@ -171,19 +171,25 @@ def _suite_gate(gen: int, challenger_gen, incumbent: str, suite: str,
 
     # --- free the challenger so the incumbent can load on the same card ----
     free_challenger()
-    _t.sleep(3)
+    _t.sleep(12)                             # let the CUDA allocator hand VRAM
+                                             # back before Ollama tries to load
 
     # incumbent must actually be servable now that VRAM is free; give a big
-    # model generous time to load, but never gate against a dead baseline.
-    for _ in range(8):
+    # model generous time to load, but never gate against a dead baseline. Log
+    # the real error each miss so a persistent failure is diagnosable, not silent.
+    last_err = ""
+    for attempt in range(15):
         try:
             ollama_chat(incumbent, "say OK")
             break
-        except Exception:
-            _t.sleep(20)
+        except Exception as e:               # noqa: BLE001
+            last_err = f"{type(e).__name__}: {e}"
+            print(f"[gate] incumbent warmup {attempt + 1}/15 failed: {last_err}")
+            _t.sleep(15)
     else:
-        raise SystemExit(f"incumbent {incumbent} unreachable — refusing to gate "
-                         f"against a dead baseline")
+        raise SystemExit(f"incumbent {incumbent} unreachable after 15 tries "
+                         f"(last: {last_err}) — refusing to gate against a dead "
+                         f"baseline")
 
     # --- PHASE 2: incumbent answers ---------------------------------------
     inc_ok_list = []
