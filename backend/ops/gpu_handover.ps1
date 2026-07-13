@@ -98,7 +98,7 @@ if (-not $DryRun) {
     }
   } elseif (Test-Path $promotedFile) {
     $pj = Get-Content $promotedFile -Raw | ConvertFrom-Json
-    if ($pj.gen -eq $Gen) { Write-Warning "PROMOTED gen$Gen but no Modelfile found under $searchRoot — export may have failed" }
+    if ($pj.gen -eq $Gen) { Write-Warning "PROMOTED gen$Gen but no Modelfile found under $searchRoot -- export may have failed" }
   }
   # -- 5. report line ---------------------------------------------------------
   $evalFile = "$RunDir\eval\gen$Gen.json"
