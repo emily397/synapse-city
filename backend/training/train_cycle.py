@@ -89,11 +89,17 @@ def main(gen: int, incumbent: str, resident: str | None = None):
         tag = f"{resident}-gen{gen}"
     if run("train_lora.py", "--gen", g, env=env) != 0:
         sys.exit("SFT failed")
-    if run("train_dpo.py", "--gen", g, "--from-sft", env=env) != 0:
-        sys.exit("DPO failed")
-    if run("eval_gate.py", "--gen", g, "--adapter", "dpo", "--incumbent", incumbent,
+    # DPO is OPTIONAL: many residents have no judged Arena pairs yet (and none of
+    # the execution-verified correct-vs-incorrect kind). Missing preference data
+    # must NOT kill the cycle — we gate the SFT adapter, which is already genuine
+    # learning. Only residents WITH pairs get the extra DPO polish.
+    adapter = "dpo" if run("train_dpo.py", "--gen", g, "--from-sft", env=env) == 0 \
+        else "sft"
+    if adapter == "sft":
+        print("[warn] no DPO pairs (or DPO failed); gating the SFT adapter.")
+    if run("eval_gate.py", "--gen", g, "--adapter", adapter, "--incumbent", incumbent,
            "--suite", "suite_v1.jsonl", env=env) == 0:
-        run("export_gguf.py", "--gen", g, "--adapter", "dpo", "--tag", tag, env=env)
+        run("export_gguf.py", "--gen", g, "--adapter", adapter, "--tag", tag, env=env)
         print(f"\n✅ {tag} PROMOTED over {incumbent}.")
         if resident:
             # close the loop: the resident's brain is swapped automatically;
