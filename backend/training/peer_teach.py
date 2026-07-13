@@ -75,31 +75,40 @@ def competence(con):
     return by_fam
 
 
-def main(per_family: int, max_lessons: int):
+def main(per_family: int, max_lessons: int, max_families: int = 0):
     con = sqlite3.connect(str(DB))
     models = {a["id"]: a["model"]
               for a in json.loads(PERSONAS.read_text(encoding="utf-8"))["agents"]}
     comp = competence(con)
     rng = random.Random(int(time.time()))
-    unload_all()
 
-    taught = 0
-    lessons_by_teacher = defaultdict(int)
-    for fam in sorted(FAMILIES):
-        if taught >= max_lessons:
-            break
+    # Build the teaching work-list and order by IMPACT (most weak students first)
+    # so short, frequent runs still hit where it matters most.
+    work = []
+    for fam in FAMILIES:
         ranked = comp.get(fam, [])
         strong = [(a, r) for a, r, _ in ranked if r >= STRONG and a in models]
         weak = [a for a, r, _ in ranked if r < WEAK]
         if not weak:
             continue
-        # the teacher: the best PEER at this family, else the 32B elder
         teacher_id, teacher_model, via = (strong[0][0], models[strong[0][0]], "peer") \
             if strong else (None, ELDER, "elder")
-        # don't let a peer teach itself; if the only strong one is also weak-listed, skip
         students = [s for s in weak if s != teacher_id]
-        if not students:
-            continue
+        if students:
+            work.append((len(students), fam, teacher_id, teacher_model, via, students))
+    work.sort(reverse=True)                      # most-needed families first
+    if max_families:
+        work = work[:max_families]
+    if not work:
+        print("nothing to teach — the town is even")
+        return
+    unload_all()
+
+    taught = 0
+    lessons_by_teacher = defaultdict(int)
+    for _, fam, teacher_id, teacher_model, via, students in work:
+        if taught >= max_lessons:
+            break
         # generate a verified pool from the teacher, then hand to every weak student
         pool = []
         for _ in range(per_family * 3):
@@ -140,5 +149,8 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--per-family", type=int, default=6)
     ap.add_argument("--max-lessons", type=int, default=300)
+    ap.add_argument("--max-families", type=int, default=0,
+                    help="cap families taught per run (0 = all) — keep it small for "
+                         "short, frequent bursts that don't rest the town for long")
     a = ap.parse_args()
-    main(a.per_family, a.max_lessons)
+    main(a.per_family, a.max_lessons, a.max_families)
