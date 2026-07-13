@@ -36,6 +36,7 @@ BASE_MAP = {
     "hermes3:8b": "unsloth/Hermes-3-Llama-3.1-8B-bnb-4bit",
     "qwen2.5-coder:7b": "unsloth/Qwen2.5-Coder-7B-Instruct-bnb-4bit",
     "qwen2.5:3b-instruct": "unsloth/Qwen2.5-3B-Instruct-bnb-4bit",
+    "qwen2.5:0.5b": "unsloth/Qwen2.5-0.5B-Instruct-bnb-4bit",  # Sol, the learner
     "gemma3:12b": "unsloth/gemma-3-12b-it-bnb-4bit",
     # aya-expanse (Cohere) — best-effort base; if Unsloth can't load this arch the
     # cycle logs a load error rather than silently skipping (see gate check).
