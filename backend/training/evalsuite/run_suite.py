@@ -21,7 +21,29 @@ import httpx
 from .verify import verify
 
 HERE = Path(__file__).resolve().parent
-OLLAMA = os.getenv("SYNAPSE_OLLAMA_URL", "http://localhost:11434").rstrip("/")
+
+
+def _resolve_ollama() -> str:
+    """Where Ollama actually lives, robust to env-propagation failures. If
+    SYNAPSE_OLLAMA_URL is set, honour it (adding a scheme if missing). If it is
+    unset OR EMPTY (the bug that silently made the in-handover gate call
+    '/api/chat' with no host -> 'missing protocol' -> every cycle rejected), and
+    we're on WSL, Ollama runs on the Windows host = the default gateway."""
+    u = (os.getenv("SYNAPSE_OLLAMA_URL") or "").strip().rstrip("/")
+    if u:
+        return u if u.startswith(("http://", "https://")) else "http://" + u
+    try:
+        import subprocess
+        gw = subprocess.run(["ip", "route", "show", "default"],
+                            capture_output=True, text=True, timeout=5).stdout.split()
+        if len(gw) >= 3 and gw[0] == "default":
+            return f"http://{gw[2]}:11434"
+    except Exception:
+        pass
+    return "http://localhost:11434"
+
+
+OLLAMA = _resolve_ollama()
 
 SYSTEM = ("You are a precise problem solver. For coding tasks reply with ONE "
           "```python code block defining the requested function. For other tasks, "
