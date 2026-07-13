@@ -526,6 +526,11 @@ class Simulation:
         dt = asyncio.create_task(self.library.nightly_distill(self.db, self.day))
         self._convos.add(dt)
         dt.add_done_callback(self._convos.discard)
+        try:
+            await self._family_life()
+        except Exception:
+            import traceback
+            traceback.print_exc()
         await self._harvest()
 
     async def _harvest(self):
@@ -537,6 +542,65 @@ class Simulation:
         if gen is not None:
             self.generation = gen.get("generation", self.generation)
             BUS.publish({"type": "generation", **gen})
+
+    # ------------------------------------------------------------------ #
+    # Family life (emergent). Once a day: sustained mutual affection becomes a
+    # lasting BOND; a bonded, same-'blood' (same base model) couple who have BOTH
+    # lived enough to shape their own weights (each carries a trained adapter =
+    # 'genes') may CONCEIVE. The town's real relationships decide who pairs and
+    # bears children — nothing is scripted. The GPU-side birth runner then fuses
+    # the two parents' adapters into a genuine child model that walks into town.
+    _BOND_MIN = 3.0          # mutual affinity (both directions) for a lasting bond
+    _CONCEIVE_PROB = 0.5     # per-day chance a ready couple conceives
+    _MAX_CHILDREN = 2        # per couple, so the town doesn't overrun
+
+    def _has_genes(self, aid: str) -> bool:
+        d = Path(__file__).resolve().parent.parent / "run" / "adapters" / aid
+        if not d.is_dir():
+            return False
+        return any((sub / "adapter_model.safetensors").exists()
+                   for sub in d.iterdir() if sub.is_dir())
+
+    async def _family_life(self):
+        ids = list(self.agents)
+        # 1) bonds form from genuine, mutual closeness
+        for i in range(len(ids)):
+            for j in range(i + 1, len(ids)):
+                a, b = ids[i], ids[j]
+                if self.survival.is_bonded(a, b):
+                    continue
+                if self.survival.mutual_affinity(a, b) >= self._BOND_MIN:
+                    self.survival.form_bond(a, b, self.day)
+                    na = self.agents[a].p["name"]
+                    nb = self.agents[b].p["name"]
+                    BUS.publish({"type": "toast",
+                                 "text": f"{na} and {nb} have become inseparable."})
+                    for x, y in ((a, b), (b, a)):
+                        t = asyncio.create_task(self.agents[x].mem.observe(
+                            f"{self.agents[y].p['name']} and I have grown close — "
+                            f"we are partners now.", self.tick, kind="bond"))
+                        self._convos.add(t)
+                        t.add_done_callback(self._convos.discard)
+        # 2) bonded same-blood couples with genes may conceive
+        for bond in self.survival.bonds():
+            a, b = bond["a"], bond["b"]
+            if a not in self.agents or b not in self.agents:
+                continue
+            if self.survival.is_expecting(a, b):
+                continue
+            model = self.agents[a].model
+            if model != self.agents[b].model:          # need shared blood to fuse
+                continue
+            if not (self._has_genes(a) and self._has_genes(b)):
+                continue                               # must have lived enough
+            if self.survival.num_children(a, b) >= self._MAX_CHILDREN:
+                continue
+            if self.rng.random() < self._CONCEIVE_PROB:
+                self.survival.conceive(a, b, model, self.day)
+                na = self.agents[a].p["name"]
+                nb = self.agents[b].p["name"]
+                BUS.publish({"type": "toast",
+                             "text": f"{na} and {nb} are expecting a child."})
 
 
 SIM = Simulation()

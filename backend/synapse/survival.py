@@ -146,6 +146,18 @@ class Survival:
                 " tick INTEGER)")
         db._run("CREATE TABLE IF NOT EXISTS relations ("
                 " pair TEXT PRIMARY KEY, score REAL DEFAULT 0)")
+        # Family life: sustained mutual affection becomes a lasting bond (a
+        # couple); a bonded, same-'blood' (same base model) couple who have both
+        # LIVED enough to shape their own weights (each has a trained adapter =
+        # 'genes') may conceive; the child is a real fusion of both parents.
+        db._run("CREATE TABLE IF NOT EXISTS bonds ("
+                " pair TEXT PRIMARY KEY, a TEXT, b TEXT, formed_day INTEGER)")
+        db._run("CREATE TABLE IF NOT EXISTS expecting ("
+                " pair TEXT PRIMARY KEY, a TEXT, b TEXT, base TEXT,"
+                " conceived_day INTEGER, status TEXT DEFAULT 'conceived')")
+        db._run("CREATE TABLE IF NOT EXISTS families ("
+                " child TEXT PRIMARY KEY, parent_a TEXT, parent_b TEXT,"
+                " born_day INTEGER)")
         self.state: dict[str, dict] = {}
         for aid in agent_ids:
             row = db.get_survival(aid)
@@ -512,6 +524,59 @@ class Survival:
         if s <= -3:
             return f"You have little patience for {b_name} and it shows."
         return ""
+
+    def mutual_affinity(self, a: str, b: str) -> float:
+        """A real bond needs BOTH to feel it — the weaker direction governs."""
+        return min(self.affinity(a, b), self.affinity(b, a))
+
+    # --- family life: bonds, pregnancy, lineage ------------------------- #
+    @staticmethod
+    def _pk(a: str, b: str) -> str:
+        return "|".join(sorted([a, b]))
+
+    def is_bonded(self, a: str, b: str) -> bool:
+        return self.db._one("SELECT 1 FROM bonds WHERE pair=?",
+                            (self._pk(a, b),)) is not None
+
+    def form_bond(self, a: str, b: str, day: int):
+        self.db._upsert("bonds", "pair", ["pair", "a", "b", "formed_day"],
+                        (self._pk(a, b), a, b, day))
+
+    def bonds(self) -> list[dict]:
+        return self.db._all("SELECT * FROM bonds")
+
+    def is_expecting(self, a: str, b: str) -> bool:
+        r = self.db._one("SELECT status FROM expecting WHERE pair=?",
+                        (self._pk(a, b),))
+        return bool(r) and r["status"] == "conceived"
+
+    def conceive(self, a: str, b: str, base: str, day: int):
+        self.db._upsert(
+            "expecting", "pair",
+            ["pair", "a", "b", "base", "conceived_day", "status"],
+            (self._pk(a, b), a, b, base, day, "conceived"))
+
+    def pending_births(self) -> list[dict]:
+        return self.db._all("SELECT * FROM expecting WHERE status='conceived'")
+
+    def mark_born(self, a: str, b: str):
+        self.db._run("UPDATE expecting SET status='born' WHERE pair=?",
+                    (self._pk(a, b),))
+
+    def record_family(self, child: str, a: str, b: str, day: int):
+        self.db._upsert("families", "child",
+                        ["child", "parent_a", "parent_b", "born_day"],
+                        (child, a, b, day))
+
+    def children_of(self, aid: str) -> list[str]:
+        return [r["child"] for r in self.db._all(
+            "SELECT child FROM families WHERE parent_a=? OR parent_b=?",
+            (aid, aid))]
+
+    def num_children(self, a: str, b: str) -> int:
+        return len(self.db._all(
+            "SELECT child FROM families WHERE (parent_a=? AND parent_b=?)"
+            " OR (parent_a=? AND parent_b=?)", (a, b, b, a)))
 
     def goods_of(self, aid: str) -> list[str]:
         return [r["item"] for r in
