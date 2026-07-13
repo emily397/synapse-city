@@ -24,22 +24,27 @@ HERE = Path(__file__).resolve().parent
 
 
 def _resolve_ollama() -> str:
-    """Where Ollama actually lives, robust to env-propagation failures. If
-    SYNAPSE_OLLAMA_URL is set, honour it (adding a scheme if missing). If it is
-    unset OR EMPTY (the bug that silently made the in-handover gate call
-    '/api/chat' with no host -> 'missing protocol' -> every cycle rejected), and
-    we're on WSL, Ollama runs on the Windows host = the default gateway."""
+    """Where Ollama actually lives, robust to env-propagation failures. The
+    in-handover gate kept getting a BROKEN SYNAPSE_OLLAMA_URL — empty, or
+    'http://:11434' with no host (empty WINIP) — which made ollama_chat call a
+    URL with no host -> 'missing protocol' -> incumbent 'unreachable' -> every
+    autonomous cycle rejected against a phantom. So we only trust a WELL-FORMED
+    http(s)://<host>[:port]; anything else falls through to detecting the Windows
+    host from the WSL default gateway (Ollama runs on the Windows side)."""
+    import re
     u = (os.getenv("SYNAPSE_OLLAMA_URL") or "").strip().rstrip("/")
-    if u:
-        return u if u.startswith(("http://", "https://")) else "http://" + u
-    try:
+    if re.match(r"^https?://[A-Za-z0-9._-]+(:\d+)?$", u):
+        return u                                  # a real host:port — trust it
+    try:                                          # empty / schemeless / no-host
         import subprocess
-        gw = subprocess.run(["ip", "route", "show", "default"],
-                            capture_output=True, text=True, timeout=5).stdout.split()
-        if len(gw) >= 3 and gw[0] == "default":
-            return f"http://{gw[2]}:11434"
+        parts = subprocess.run(["ip", "route", "show", "default"],
+                               capture_output=True, text=True, timeout=5).stdout.split()
+        if len(parts) >= 3 and parts[0] == "default":
+            return f"http://{parts[2]}:11434"     # the Windows host from WSL
     except Exception:
         pass
+    if u and "://" not in u:
+        return "http://" + u                      # salvage a bare host:port
     return "http://localhost:11434"
 
 
