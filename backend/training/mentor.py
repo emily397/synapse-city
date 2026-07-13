@@ -58,7 +58,24 @@ def gen(model: str, prompt: str, keep: str = "10m") -> str:
     return r.json()["message"]["content"]
 
 
-def main(n_tasks: int):
+def weak_families(con, student, min_attempts=2, pass_ceiling=0.6):
+    """Families this student actually WORKS ON (has real attempts) but is weak at
+    (pass-rate below the ceiling). These are its learning frontier — teaching it
+    what it already solves adds nothing and only specialises it off-distribution.
+    Excludes prior 'mentor:' rows so we don't chase our own tail."""
+    rows = con.execute(
+        "SELECT family, COALESCE(SUM(pass),0) p, COUNT(*) n FROM attempts "
+        "WHERE agent=? AND family NOT LIKE 'mentor:%' GROUP BY family",
+        (student,)).fetchall()
+    weak = []
+    for fam, p, n in rows:
+        if fam in FAMILIES and n >= min_attempts and (p / n) < pass_ceiling:
+            weak.append((fam, p / n, n))
+    weak.sort(key=lambda x: x[1])                # weakest first
+    return [w[0] for w in weak]
+
+
+def main(n_per_family: int, max_lessons: int = 200):
     con = sqlite3.connect(str(DB))
     students = [r[0] for r in con.execute(
         "SELECT DISTINCT speaker FROM exchanges").fetchall() if r[0]]
@@ -66,24 +83,45 @@ def main(n_tasks: int):
         print("no students yet"); return
     rng = random.Random(int(time.time()))
     unload_all()
+
+    # Which student is weak in which family (targeted; follows what they work on).
+    weak_by_student = {s: weak_families(con, s) for s in students}
+    families_needed = sorted({f for fams in weak_by_student.values() for f in fams})
+    print(f"[mentor] {len(students)} students; weak families to teach: "
+          f"{families_needed or '(none yet — need more attempts logged)'}")
+
+    # Solve each needed family ONCE into a shared verified pool (fresh seeds, so
+    # the METHOD is taught, not a memorised instance), then distribute each
+    # family's lessons only to the students actually weak in it.
     taught = 0
-    for i in range(n_tasks):
-        fam = rng.choice(sorted(FAMILIES))
-        task = make_task(fam, rng.randrange(TRAIN_SEED_MAX))
-        try:
-            out = gen(MENTOR, task["prompt"])
-            ok, _ = verify(task, out)
-        except Exception as e:
-            print(f"[{i+1}] error: {e}"); continue
-        print(f"[{i+1}/{n_tasks}] {fam}: {'VERIFIED' if ok else 'rejected'}")
-        if not ok:
+    for fam in families_needed:
+        if taught >= max_lessons:
+            break
+        pool = []
+        for _ in range(n_per_family * 3):        # over-sample; keep the verified
+            if len(pool) >= n_per_family:
+                break
+            task = make_task(fam, rng.randrange(TRAIN_SEED_MAX))
+            try:
+                out = gen(MENTOR, task["prompt"])
+                ok, _ = verify(task, out)
+            except Exception as e:               # noqa: BLE001
+                print(f"[{fam}] error: {e}"); continue
+            if ok:
+                pool.append((task["seed"], task["prompt"], out))
+        if not pool:
+            print(f"[{fam}] mentor could not verify any solution — skipping")
             continue
-        for s in students:
-            con.execute(
-                "INSERT INTO attempts(agent,family,seed,tick,pass,prompt,response)"
-                " VALUES(?,?,?,?,1,?,?)",
-                (s, "mentor:" + fam, task["seed"], 0, task["prompt"], out))
-        taught += 1
+        recipients = [s for s in students if fam in weak_by_student[s]]
+        for s in recipients:
+            for seed, prompt, out in pool:
+                con.execute(
+                    "INSERT INTO attempts(agent,family,seed,tick,pass,prompt,response)"
+                    " VALUES(?,?,?,?,1,?,?)",
+                    (s, "mentor:" + fam, seed, 0, prompt, out))
+                taught += 1
+        print(f"[teach] {fam}: {len(pool)} verified lessons -> "
+              f"{len(recipients)} weak students")
     con.commit(); con.close()
     unload_all()
     # re-pin the judge for the day
@@ -99,5 +137,10 @@ def main(n_tasks: int):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--tasks", type=int, default=30)
-    main(ap.parse_args().tasks)
+    ap.add_argument("--per-family", type=int, default=4,
+                    help="verified fresh instances the mentor teaches per weak family")
+    ap.add_argument("--max-lessons", type=int, default=300)
+    ap.add_argument("--tasks", type=int, default=None,
+                    help="(deprecated; ignored) kept for supervisor compatibility")
+    a = ap.parse_args()
+    main(a.per_family, a.max_lessons)
