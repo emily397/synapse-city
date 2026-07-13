@@ -105,7 +105,7 @@ def main(gen: int, incumbent: str, resident: str | None = None):
     if adapter == "sft":
         print("[warn] no DPO pairs (or DPO failed); gating the SFT adapter.")
     if run("eval_gate.py", "--gen", g, "--adapter", adapter, "--incumbent", incumbent,
-           "--suite", "suite_v1.jsonl", env=env) == 0:
+           "--suite", "suite_v2.jsonl", env=env) == 0:
         run("export_gguf.py", "--gen", g, "--adapter", adapter, "--tag", tag, env=env)
         print(f"\n✅ {tag} PROMOTED over {incumbent}.")
         if resident:

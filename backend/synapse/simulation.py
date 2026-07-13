@@ -226,8 +226,31 @@ class Simulation:
             self.survival.wander_animals(self.rng, list(self.world.districts))
             self._move_and_meet()
             self._world_step()
+            self._perceive()
 
     # ------------------------------------------------------------------ #
+    def _perceive(self):
+        """Sight: now and then a resident LOOKS at the world around them and
+        takes in who is near, where they are, and the weather — perception in
+        spatial/visual form, not just told. It becomes a 'sight' memory, so
+        reading the world feeds their reflection and, in time, their weights."""
+        for a in self.agents.values():
+            if a.status != "idle" or self.rng.random() >= 0.05:
+                continue
+            here = [o.p["name"] for o in self.agents.values()
+                    if o.district == a.district and o.id != a.id]
+            d = self.world.districts[a.district]
+            beasts = self.survival.animals_at(a.district) \
+                if hasattr(self.survival, "animals_at") else []
+            seen = (f"I look around {d.name}. "
+                    + (f"I see {', '.join(here)} here with me. " if here
+                       else "No one else is here right now. ")
+                    + (f"There are {', '.join(beasts)} about. " if beasts else "")
+                    + f"The weather is {self.survival.current_weather(self.day)}.")
+            t = asyncio.create_task(a.mem.observe(seen, self.tick, kind="sight"))
+            self._convos.add(t)
+            t.add_done_callback(self._convos.discard)
+
     def _move_and_meet(self):
         # 0) morning: anyone still abed gets up (runs only in daytime).
         for a in self.agents.values():

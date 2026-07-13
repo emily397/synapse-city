@@ -16,4 +16,4 @@ curl -s -m 60 -X POST http://${WINIP}:11434/api/generate \
 echo ""
 echo "--- running gate ---"
 /root/proprietary-model/.venv/bin/python eval_gate.py \
-  --gen "$GEN" --adapter "$ADAPTER" --incumbent "$INC" --suite suite_v1.jsonl
+  --gen "$GEN" --adapter "$ADAPTER" --incumbent "$INC" --suite suite_v2.jsonl

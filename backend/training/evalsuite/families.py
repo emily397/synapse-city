@@ -546,7 +546,98 @@ def rate_limiter(seed):
             "check": f"assert solve({times!r}, {limit}, {window}) == {allowed!r}"}
 
 
+# --------------------------------------------------------------- VISUAL ---- #
+# Parsing data in VISUAL / spatial form (grids, tables, charts) rather than
+# prose — so residents learn to read the world as it is drawn, not just told.
+
+def grid_count(seed):
+    rng = random.Random(seed)
+    h, w = rng.randint(4, 7), rng.randint(5, 9)
+    sym = rng.choice("#*@O")
+    n = 0
+    rows = []
+    for _ in range(h):
+        row = ""
+        for _ in range(w):
+            if rng.random() < 0.32:
+                row += sym; n += 1
+            else:
+                row += "."
+        rows.append(row)
+    grid = "\n".join(rows)
+    return {"kind": "answer",
+            "prompt": (f"Below is a grid. Count how many '{sym}' symbols it "
+                       f"contains.\n\n{grid}\n\n"
+                       "End your reply with the line 'ANSWER: <count>'."),
+            "expected": str(n)}
+
+
+def grid_find(seed):
+    rng = random.Random(seed)
+    h, w = rng.randint(4, 7), rng.randint(5, 9)
+    r0, c0 = rng.randrange(h), rng.randrange(w)
+    rows = ["".join("X" if (r, c) == (r0, c0) else "." for c in range(w))
+            for r in range(h)]
+    grid = "\n".join(rows)
+    return {"kind": "answer",
+            "prompt": (f"In the grid below, locate the single 'X'. Give its position "
+                       f"as row,col with 0-based indexing from the top-left corner.\n\n"
+                       f"{grid}\n\nEnd with 'ANSWER: row,col' (for example ANSWER: 2,3)."),
+            "expected": f"{r0},{c0}"}
+
+
+def read_table(seed):
+    rng = random.Random(seed)
+    names = rng.sample(["ada", "ben", "cy", "dot", "eli", "fay", "gil", "hana"], 4)
+    ages = [rng.randint(10, 80) for _ in names]
+    lines = ["| name | age |", "|------|-----|"]
+    lines += [f"| {n} | {a} |" for n, a in zip(names, ages)]
+    table = "\n".join(lines)
+    q = rng.randrange(4)
+    return {"kind": "answer",
+            "prompt": (f"Read this table:\n\n{table}\n\n"
+                       f"What is {names[q]}'s age? End with 'ANSWER: <number>'."),
+            "expected": str(ages[q])}
+
+
+def bar_chart(seed):
+    rng = random.Random(seed)
+    labels = rng.sample(["A", "B", "C", "D", "E"], 4)
+    vals = rng.sample(range(1, 10), 4)
+    chart = "\n".join(f"{l} | {'#' * v} ({v})" for l, v in zip(labels, vals))
+    top = labels[vals.index(max(vals))]
+    return {"kind": "answer",
+            "prompt": (f"A bar chart:\n\n{chart}\n\n"
+                       f"Which label has the tallest bar? End with 'ANSWER: <label>'."),
+            "expected": top}
+
+
+def grid_distance(seed):
+    rng = random.Random(seed)
+    h, w = rng.randint(5, 8), rng.randint(5, 9)
+    cells = rng.sample([(r, c) for r in range(h) for c in range(w)], 2)
+    (r1, c1), (r2, c2) = cells
+    rows = []
+    for r in range(h):
+        row = ""
+        for c in range(w):
+            row += "S" if (r, c) == (r1, c1) else "E" if (r, c) == (r2, c2) else "."
+        rows.append(row)
+    grid = "\n".join(rows)
+    dist = abs(r1 - r2) + abs(c1 - c2)
+    return {"kind": "answer",
+            "prompt": (f"In the grid below, find 'S' and 'E'. How many single steps "
+                       f"(up/down/left/right, no diagonals) is the shortest path "
+                       f"between them?\n\n{grid}\n\nEnd with 'ANSWER: <steps>'."),
+            "expected": str(dist)}
+
+
 FAMILIES = {
+    "grid_count": grid_count,
+    "grid_find": grid_find,
+    "read_table": read_table,
+    "bar_chart": bar_chart,
+    "grid_distance": grid_distance,
     "json_pluck": json_pluck,
     "schema_map": schema_map,
     "flatten_dict": flatten_dict,
