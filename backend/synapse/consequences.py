@@ -148,6 +148,79 @@ class Consequences:
         return mem
 
 
+    # ---- god-mode one-off interventions (the /api/* buttons on the frontend) --
+    # Each is a single, self-contained shove to the shared world; the normal
+    # consequence cascade then plays out the aftermath over the following days.
+    # All effects use only safe ops (env vars, food dict, joy, goods) and never
+    # block, so a click can't break the sim.
+    def flood(self, survival, agents, rng) -> str:
+        self._set("env_water", 1.0)
+        self._set("env_soil", max(0.15, self._get("env_soil") * 0.6))   # topsoil washed
+        self._set("env_unrest", _clamp(self._get("env_unrest") + 0.15))
+        for a in agents:
+            s = survival.state.get(a)
+            if s and s.get("food", 0) > 0 and rng.random() < 0.6:
+                s["food"] = max(0, s["food"] - 1)                       # stores soaked
+        BUS.publish({"type": "toast", "text": "\U0001F30A A FLOOD sweeps the town - the "
+                     "river bursts its banks, stores are soaked and the low fields drown."})
+        BUS.publish({"type": "env", **self.state()})
+        return ("A flood swept through the town - the river burst its banks, soaking the "
+                "stores and drowning the low fields.")
+
+    def wildfire(self, survival, agents, rng) -> str:
+        self._set("env_forest", 0.10)
+        self._set("env_unrest", _clamp(self._get("env_unrest") + 0.12))
+        for a in agents:
+            s = survival.state.get(a)
+            if s and rng.random() < 0.4:
+                s["food"] = max(0, s.get("food", 0) - 1)
+            survival.add_joy(a, -3)
+        BUS.publish({"type": "toast", "text": "\U0001F525 FIRE! Flames tear through the "
+                     "woods and the edge of town - timber, forage and nerves all burn."})
+        BUS.publish({"type": "env", **self.state()})
+        return ("A wildfire tore through the woods and the edge of town; timber and "
+                "forage went up in smoke and everyone smells of ash.")
+
+    def bounty_harvest(self, survival, agents, rng) -> str:
+        self._set("env_soil", 0.95)
+        self._set("env_price", max(2.0, self._get("env_price") * 0.55))
+        self._set("env_unrest", _clamp(self._get("env_unrest") - 0.15))
+        for a in agents:
+            s = survival.state.get(a)
+            if s:
+                s["food"] = min(9, s.get("food", 0) + 3)
+            survival.add_joy(a, 5)
+        BUS.publish({"type": "toast", "text": "\U0001F33E A BOUNTIFUL HARVEST! The gardens "
+                     "overflow - full stores, cheap food, and spirits soaring."})
+        BUS.publish({"type": "env", **self.state()})
+        return ("A bountiful harvest filled every store to the brim; food is plentiful "
+                "and cheap, and the whole town is in good spirits.")
+
+    def gift_trees(self, survival, agents, rng) -> str:
+        self._set("env_forest", 1.0)
+        for a in agents:
+            try:
+                if rng.random() < 0.6:
+                    survival.db._run("INSERT INTO goods(agent,item) VALUES(?,?)",
+                                     (a, "a bundle of good timber"))
+            except Exception:
+                pass
+        BUS.publish({"type": "toast", "text": "\U0001F332 A GIFT OF TREES - a new grove "
+                     "rises overnight; timber to build with and forage to gather, plentiful again."})
+        BUS.publish({"type": "env", **self.state()})
+        return ("A new grove of trees rose overnight - there is fresh timber to build "
+                "with and forage to gather, plentiful once more.")
+
+    def gift_rain(self, survival, agents, rng) -> str:
+        self._set("env_water", _clamp(self._get("env_water") + 0.5))
+        self._set("env_soil", _clamp(self._get("env_soil") + 0.25))
+        BUS.publish({"type": "toast", "text": "\U0001F327 A GENTLE RAIN falls - the wells "
+                     "fill, the soil drinks deep, and the gardens will grow again."})
+        BUS.publish({"type": "env", **self.state()})
+        return ("A gentle, soaking rain fell over the town; the wells filled and the "
+                "tired soil drank deep.")
+
+
 def _clamp(x: float) -> float:
     return max(0.0, min(1.0, x))
 

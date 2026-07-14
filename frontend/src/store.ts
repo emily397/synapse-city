@@ -25,6 +25,7 @@ interface State {
   apply: (ev: any) => void;
   fetchModels: () => Promise<any>;
   addResident: (spec: any) => Promise<any>;
+  fireEvent: (name: string) => Promise<any>;
 }
 
 // Point the deployed frontend at a self-hosted backend with these (build-time):
@@ -88,6 +89,13 @@ export const useStore = create<State>((set, get) => ({
     });
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || "add failed");
     return r.json();   // the new resident also arrives over WS as agent_added
+  },
+  // God-mode one-off world events. The effect + its toast arrive over WS, so we
+  // only need to POST; a failure never touches the running sim.
+  fireEvent: async (name) => {
+    const r = await fetch(`${API_BASE}/api/${name}`, { method: "POST" });
+    if (!r.ok) throw new Error("event failed");
+    return r.json();
   },
 
   connect: async () => {

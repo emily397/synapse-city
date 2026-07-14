@@ -185,6 +185,79 @@ async def drought(ticks: int = 120):
     return {"drought_ticks": ticks, "breaks_at_tick": SIM.survival.drought_until}
 
 
+# --- god-mode one-off world events (frontend buttons) --------------------- #
+# Each shoves the shared world once; the consequence cascade plays out the
+# aftermath over following days. All are non-blocking and can't break the sim.
+def _god(fn_name: str):
+    ids = list(SIM.agents)
+    fn = getattr(SIM.consequences, fn_name)
+    ev = fn(SIM.survival, ids, SIM.rng)
+    asyncio.create_task(_broadcast_memory(ev))
+    return {"event": fn_name, "env": SIM.consequences.state()}
+
+
+@app.post("/api/flood")
+async def flood():
+    """A flood: waters rise, stores soak, low fields drown. One-off."""
+    return _god("flood")
+
+
+@app.post("/api/fire")
+async def fire():
+    """A wildfire: the woods and town-edge burn; timber and forage lost. One-off."""
+    return _god("wildfire")
+
+
+@app.post("/api/harvest")
+async def harvest_boon():
+    """A bountiful harvest: full stores, cheap food, soaring spirits. One-off."""
+    return _god("bounty_harvest")
+
+
+@app.post("/api/trees")
+async def trees():
+    """A gift of trees: a new grove for timber and forage. One-off."""
+    return _god("gift_trees")
+
+
+@app.post("/api/rain")
+async def rain():
+    """A gentle rain: wells fill, soil recovers, gardens grow again. One-off."""
+    return _god("gift_rain")
+
+
+@app.post("/api/knowledge")
+async def knowledge():
+    """A gift of knowledge: fresh notes appear in the Town Library to study and
+    argue over. One-off."""
+    notes = [
+        ("science", "Small, steady improvements compound: a system that learns a "
+         "little every day outruns one that waits for a great leap.", "a gift of knowledge"),
+        ("craft", "Rotate the fields and let some rest, or the soil gives less each "
+         "year - abundance now can beget scarcity later.", "a gift of knowledge"),
+        ("reason", "When two people disagree, the fastest path to truth is to state "
+         "what evidence would change your own mind.", "a gift of knowledge"),
+        ("engineering", "Store water when it is plentiful; the cheapest well is the "
+         "rain you kept from yesterday.", "a gift of knowledge"),
+        ("philosophy", "A community is stronger when the strongest teach what they "
+         "know to the ones who struggle most.", "a gift of knowledge"),
+    ]
+    day = SIM.day
+
+    async def _add():
+        for kind, claim, src in notes:
+            try:
+                await SIM.library.add_note(kind, claim, src, day)
+            except Exception:
+                pass
+
+    asyncio.create_task(_add())
+    asyncio.create_task(_broadcast_memory(
+        "A trove of new knowledge arrived in the Town Library - fresh ideas to "
+        "study, teach, and argue over."))
+    return {"event": "knowledge", "notes_added": len(notes)}
+
+
 @app.websocket("/ws")
 async def ws(sock: WebSocket):
     await sock.accept()

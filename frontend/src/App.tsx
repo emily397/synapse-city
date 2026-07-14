@@ -2,6 +2,7 @@ import { Component, useEffect, type ReactNode } from "react";
 import { Scene } from "./three/Scene";
 import { Hud } from "./ui/Hud";
 import { AddResident } from "./ui/AddResident";
+import { GodPanel } from "./ui/GodPanel";
 import { useStore } from "./store";
 
 class SceneBoundary extends Component<{ children: ReactNode }, { err: string | null }> {
@@ -38,6 +39,7 @@ export function App() {
       <SceneBoundary><Scene /></SceneBoundary>
       <Hud />
       <AddResident />
+      <GodPanel />
     </div>
   );
 }
