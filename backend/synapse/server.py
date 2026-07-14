@@ -106,8 +106,53 @@ async def agent_profile(aid: str):
         "SELECT count(*) AS n FROM interactions WHERE participants LIKE ?",
         (f"%{aid}%",)) or {}
 
+    # Life status: hunger/health/joy/wealth bars, bonds, relationships, skills,
+    # family. Wrapped so a missing table can never 500 the check-in window.
+    status: dict = {}
+    try:
+        surv = SIM.survival
+        st = surv.state.get(aid, {})
+        bonds = []
+        for b in surv.bonds():
+            if aid in (b["a"], b["b"]):
+                other = b["b"] if b["a"] == aid else b["a"]
+                o = SIM.agents.get(other)
+                bonds.append(o.p["name"] if o else other)
+        rels = db._all("SELECT pair, score FROM relations WHERE pair LIKE ? "
+                       "ORDER BY score DESC LIMIT 4", (f"{aid}>%",))
+        relationships = []
+        for r in rels:
+            other = r["pair"].split(">", 1)[1]
+            o = SIM.agents.get(other)
+            relationships.append({"name": o.p["name"] if o else other,
+                                  "score": round(r["score"], 1)})
+        skills = db._all("SELECT name, family, used, wins FROM skills WHERE agent=? "
+                         "ORDER BY used DESC LIMIT 8", (aid,))
+        children = []
+        for cid in surv.children_of(aid):
+            o = SIM.agents.get(cid)
+            children.append(o.p["name"] if o else cid)
+        evolved = ("-gen" in agent.model) or agent.model.startswith(("synapse-", "child-"))
+        status = {
+            "hunger": round(st.get("hunger", 0.0)),
+            "food": int(st.get("food", 0)),
+            "health": round(surv.hp(aid)),
+            "joy": round(surv.joy(aid)),
+            "coin": round(surv.coin(aid), 1),
+            "owns_land": bool(surv.public_wallet(aid).get("owns_land", 0)),
+            "bonds": bonds,
+            "relationships": relationships,
+            "skills": [{"name": s["name"], "family": s["family"],
+                        "used": s["used"], "wins": s["wins"]} for s in skills],
+            "children": children,
+            "evolved": evolved,        # has this model been promoted past its base?
+        }
+    except Exception:
+        status = {}
+
     return {
         "agent": agent.public(),
+        "status": status,
         "elo": {"rating": elo.get("rating", 1000.0), "games": elo.get("games", 0)},
         "debates": {"wins": wins.get("n", 0), "losses": losses.get("n", 0)},
         "memories": {"total": mem_total.get("n", 0),
@@ -181,6 +226,7 @@ async def drought(ticks: int = 120):
     and keeps new plantings from taking root for its duration. Temporary — it
     breaks on its own. Watch how they ration, trade, and fight to survive it."""
     ev = SIM.survival.start_drought(SIM.tick, ticks, SIM.agents)
+    SIM.set_weather("drought", 60, "\U0001F3DC")     # felt+visible dry spell
     asyncio.create_task(_broadcast_memory(ev))
     return {"drought_ticks": ticks, "breaks_at_tick": SIM.survival.drought_until}
 
@@ -188,10 +234,22 @@ async def drought(ticks: int = 120):
 # --- god-mode one-off world events (frontend buttons) --------------------- #
 # Each shoves the shared world once; the consequence cascade plays out the
 # aftermath over following days. All are non-blocking and can't break the sim.
+# events that come with a felt+visible weather spell (kind, seconds, emoji)
+_GOD_WEATHER = {
+    "flood": ("flood", 40, "\U0001F30A"),
+    "wildfire": ("fire", 35, "\U0001F525"),
+    "gift_rain": ("rain", 45, "\U0001F327"),
+    "bounty_harvest": ("bounty", 25, "\U0001F33E"),
+}
+
+
 def _god(fn_name: str):
     ids = list(SIM.agents)
     fn = getattr(SIM.consequences, fn_name)
     ev = fn(SIM.survival, ids, SIM.rng)
+    spell = _GOD_WEATHER.get(fn_name)
+    if spell:
+        SIM.set_weather(*spell)            # paint it + let bodies feel it
     asyncio.create_task(_broadcast_memory(ev))
     return {"event": fn_name, "env": SIM.consequences.state()}
 

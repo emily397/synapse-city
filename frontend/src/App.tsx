@@ -3,6 +3,7 @@ import { Scene } from "./three/Scene";
 import { Hud } from "./ui/Hud";
 import { AddResident } from "./ui/AddResident";
 import { GodPanel } from "./ui/GodPanel";
+import { WeatherOverlay } from "./ui/WeatherOverlay";
 import { useStore } from "./store";
 
 class SceneBoundary extends Component<{ children: ReactNode }, { err: string | null }> {
@@ -37,6 +38,7 @@ export function App() {
   return (
     <div className="app">
       <SceneBoundary><Scene /></SceneBoundary>
+      <WeatherOverlay />
       <Hud />
       <AddResident />
       <GodPanel />

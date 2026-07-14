@@ -18,6 +18,7 @@ interface State {
   selectedAgent: string | null;
   profile: any | null;
   profileLoading: boolean;
+  weather: { kind: string; until: number } | null;
   selectAgent: (id: string | null) => void;
   toggleRotate: () => void;
   togglePresenter: () => void;
@@ -64,6 +65,7 @@ export const useStore = create<State>((set, get) => ({
   selectedAgent: null,
   profile: null,
   profileLoading: false,
+  weather: null,
   selectAgent: (id) => {
     if (!id) { set({ selectedAgent: null, profile: null }); return; }
     set({ selectedAgent: id, profile: null, profileLoading: true });
@@ -188,11 +190,18 @@ export const useStore = create<State>((set, get) => ({
         set({ feed: pushFeed(s.feed, { id: feedId++, kind: "toast",
           color: "#8fb4ff", text: ev.text }) });
         break;
+      case "weather":
+        set({ weather: ev.active
+          ? { kind: ev.kind, until: Date.now() + (ev.seconds || 30) * 1000 }
+          : null });
+        break;
       case "snapshot": {
         const agents: Record<string, Agent> = {};
         ev.agents.forEach((a: Agent) => (agents[a.id] = a));
         set({ world: ev.world, agents, clock: ev.clock, stats: ev.stats,
-              live: ev.stats?.backend !== undefined });
+              live: ev.stats?.backend !== undefined,
+              weather: ev.weather
+                ? { kind: ev.weather.kind, until: Date.now() + 30000 } : null });
         break;
       }
       case "move": {

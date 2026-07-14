@@ -43,6 +43,7 @@ class Simulation:
         self.survival = Survival(self.db, list(self.agents), world=self.world)
         from .consequences import Consequences
         self.consequences = Consequences(self.db)      # causation / domino effects
+        self.weather_fx = None                          # felt+visible weather spell
         self.proving = ProvingGrounds(self.db)
         from .library import Library
         self.library = Library(self.db)
@@ -75,6 +76,7 @@ class Simulation:
             "agents": [a.public() for a in self.agents.values()],
             "clock": self._clock(),
             "stats": self._stats(),
+            "weather": self.weather_fx,     # so a fresh page paints active weather
         }
 
     def _clock(self) -> dict:
@@ -222,6 +224,8 @@ class Simulation:
                 self._convos.add(et)
                 et.add_done_callback(self._convos.discard)
 
+        await self._weather_feel()     # if a spell is on, bodies feel it (day or night)
+
         if self._is_night(h):
             await self._night_step()
         else:
@@ -231,6 +235,52 @@ class Simulation:
             self._perceive()
 
     # ------------------------------------------------------------------ #
+    # Weather they can SEE and FEEL. A spell paints on the frontend AND is felt
+    # in the body — cold rain, biting smoke, rising water — and every sensation
+    # is written as a memory, so LIVED weather (not just a stat) feeds training.
+    _WEATHER_FEEL = {
+        "rain": ["Cool rain patters on my face and soaks into my collar.",
+                 "I pull my coat tighter; I can feel the gardens drinking it in.",
+                 "My boots squelch in the wet earth and the air smells of rain."],
+        "fire": ["Heat rolls off the flames and stings my cheeks.",
+                 "Smoke claws at my throat and blurs my eyes.",
+                 "The timber crackles and roars nearby; my heart is pounding."],
+        "flood": ["Cold water swirls around my ankles and keeps rising.",
+                  "Everything I'm carrying is soaked through and heavy.",
+                  "I wade toward higher ground, the current tugging at my legs."],
+        "drought": ["The dry heat cracks my lips; I'd give anything for water.",
+                    "Dust coats everything and the ground is split open.",
+                    "My throat is parched and I can see the crops curling."],
+        "bounty": ["My arms are full of ripe produce; the stores are overflowing.",
+                   "The smell of fresh harvest is everywhere and my belly is full."],
+    }
+
+    def set_weather(self, kind: str, seconds: int, emoji: str = ""):
+        secs = max(1, int(seconds))
+        span = max(1, secs // max(CONFIG.tick_seconds, 1))
+        self.weather_fx = {"kind": kind, "emoji": emoji,
+                           "until_tick": self.tick + span}
+        BUS.publish({"type": "weather", "kind": kind, "emoji": emoji,
+                     "active": True, "seconds": secs})
+
+    async def _weather_feel(self):
+        fx = self.weather_fx
+        if not fx:
+            return
+        if self.tick >= fx["until_tick"]:
+            self.weather_fx = None
+            BUS.publish({"type": "weather", "active": False})
+            return
+        lines = self._WEATHER_FEEL.get(fx["kind"])
+        if not lines:
+            return
+        for a in self.agents.values():
+            if self.rng.random() < 0.06:        # now and then, someone feels it
+                t = asyncio.create_task(
+                    a.mem.observe(self.rng.choice(lines), self.tick, kind="sensation"))
+                self._convos.add(t)
+                t.add_done_callback(self._convos.discard)
+
     def _perceive(self):
         """Sight: now and then a resident LOOKS at the world around them and
         takes in who is near, where they are, and the weather — perception in
