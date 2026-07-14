@@ -40,12 +40,18 @@ let feedId = 0;
 let liveWs: WebSocket | null = null;
 let mockTimer: any = null;
 let reconnectTimer: any = null;
-let reconnectDelay = 5000;
+let reconnectDelay = 1500;
+let lastMsg = 0;            // when we last heard from the live feed
+let hbTimer: any = null;    // staleness watchdog
+let listenersAdded = false;
 
 function scheduleReconnect(connect: () => void, delay?: number) {
   if (reconnectTimer) return;                 // never stack retries
   const d = delay ?? reconnectDelay;
-  reconnectDelay = Math.min(reconnectDelay * 2, 60000);
+  // gentle growth, capped LOW so a dropped tunnel reconnects in seconds, not a
+  // minute — trycloudflare drops long-lived WebSockets often, so recovery has
+  // to be fast or the town looks "offline" when it's really right there.
+  reconnectDelay = Math.min(Math.round(reconnectDelay * 1.5), 8000);
   reconnectTimer = setTimeout(() => { reconnectTimer = null; connect(); }, d);
 }
 
@@ -139,7 +145,7 @@ export const useStore = create<State>((set, get) => ({
       // Nothing answers right now: show the offline mock but KEEP looking for
       // the real town; when it comes back we take over transparently.
       if (!get().world && !mockTimer) mockTimer = startMock(get().apply);
-      scheduleReconnect(() => get().connect(), 30000);
+      scheduleReconnect(() => get().connect(), 5000);
       return;
     }
     API_BASE = base.api;
@@ -154,12 +160,29 @@ export const useStore = create<State>((set, get) => ({
       const ws = new WebSocket(`${base.ws}/ws`);
       liveWs = ws;
       ws.onopen = () => {
-        reconnectDelay = 5000;                 // healthy again: reset backoff
+        reconnectDelay = 1500;                 // healthy again: reset backoff
+        lastMsg = Date.now();
         if (mockTimer) { clearInterval(mockTimer); mockTimer = null; }
         set({ connected: true });
+        // staleness watchdog: if the socket goes silent (trycloudflare can drop
+        // a WS without a clean close), force a fast reconnect instead of hanging.
+        if (hbTimer) clearInterval(hbTimer);
+        hbTimer = setInterval(() => {
+          if (Date.now() - lastMsg > 20000) { try { ws.close(); } catch {} }
+        }, 4000);
+        // and reconnect the instant the tab refocuses or the network returns
+        if (!listenersAdded) {
+          listenersAdded = true;
+          const kick = () => { if (!get().connected) { reconnectDelay = 1500; get().connect(); } };
+          window.addEventListener("online", kick);
+          window.addEventListener("focus", kick);
+          document.addEventListener("visibilitychange",
+            () => { if (!document.hidden) kick(); });
+        }
       };
-      ws.onmessage = (m) => get().apply(JSON.parse(m.data));
+      ws.onmessage = (m) => { lastMsg = Date.now(); get().apply(JSON.parse(m.data)); };
       ws.onclose = () => {
+        if (hbTimer) { clearInterval(hbTimer); hbTimer = null; }
         set({ connected: false });
         // Tunnel churned or backend restarted: re-resolve from scratch
         // (fresh TUNNEL fetch) and reconnect. The town never stays gone.
