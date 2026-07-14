@@ -65,10 +65,13 @@ class Consequences:
         rainy = any(w in weather for w in ("rain", "storm", "wet", "shower"))
         dry = any(w in weather for w in ("drought", "dry", "heat", "sun-bak"))
 
-        # coupled dynamics (deterministic, predictable)
-        soil = _clamp(soil - 0.03 * min(delta, 6) + (0.10 if rainy else 0.02) - (0.05 if dry else 0))
-        water = _clamp(water - 0.04 * min(delta, 6) + (0.22 if rainy else 0.0) - (0.10 if dry else 0.03))
-        forest = _clamp(forest - 0.015 * min(delta, 6) + 0.05)   # slow regrowth
+        # coupled dynamics (deterministic, predictable). Depletion SCALES with how
+        # much is left — rich land gives up more when worked, exhausted land can't
+        # fall to nothing — and steady recovery lets the town climb back out of a
+        # bad patch instead of death-spiralling. Resources never drop below a floor.
+        soil = _floor(soil - 0.025 * min(delta, 6) * (0.4 + soil) + (0.12 if rainy else 0.07) - (0.04 if dry else 0))
+        water = _floor(water - 0.030 * min(delta, 6) * (0.4 + water) + (0.25 if rainy else 0.09) - (0.08 if dry else 0))
+        forest = _floor(forest - 0.012 * min(delta, 6) * (0.4 + forest) + 0.11)   # regrows
 
         # --- 2. the domino chain: each crossed threshold is a real effect + memory ---
         # A. tired soil / no water -> the crop fails -> food scarce, price climbs
@@ -134,9 +137,9 @@ class Consequences:
                                "forage and the creatures have gone."))
             forest = _clamp(forest + 0.03)
 
-        # price drifts back toward normal as supply recovers
-        price += (5.0 - price) * 0.10
-        unrest = _clamp(unrest - 0.03)
+        # price drifts back toward normal as supply recovers; tension cools
+        price += (5.0 - price) * 0.20
+        unrest = _clamp(unrest - 0.06)
 
         for k, v in (("env_soil", soil), ("env_water", water), ("env_forest", forest),
                      ("env_price", price), ("env_unrest", unrest)):
@@ -147,3 +150,8 @@ class Consequences:
 
 def _clamp(x: float) -> float:
     return max(0.0, min(1.0, x))
+
+
+def _floor(x: float) -> float:
+    # resources never fully die — there's always a seed to recover from
+    return max(0.08, min(1.0, x))
